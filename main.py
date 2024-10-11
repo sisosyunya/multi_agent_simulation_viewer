@@ -3,6 +3,7 @@ import networkx as nx
 import matplotlib.pyplot as plt
 import random
 import matplotlib.animation as animation
+from matplotlib.widgets import Button
 
 from mesa import Agent, Model
 from mesa.time import RandomActivation
@@ -45,8 +46,6 @@ class RoadModel(Model):
         self.schedule = RandomActivation(self)
         # 地図データを取得（小さな範囲）
         self.G = ox.graph_from_place('Ibarakishi, Osaka, Japan', network_type='drive')
-
-        # self.G = ox.simplify_graph(self.G)  # グラフを簡略化（削除またはコメントアウト）
         self.pos = {node: (data['x'], data['y']) for node, data in self.G.nodes(data=True)}
         self.shortest_paths = {}  # 経路のキャッシュ
         # 状態の履歴を保存するリスト
@@ -97,7 +96,7 @@ class RoadModel(Model):
 # シミュレーションとアニメーションの設定
 def run_simulation():
     model = RoadModel(N=5)  # エージェント数を減らす
-    num_steps = 50
+    num_steps = 200
     current_step = [0]  # リストで包むことで、内部関数から変更可能にする
     pause = [False]     # 一時停止のフラグ
 
@@ -111,6 +110,19 @@ def run_simulation():
         x, y = model.pos[agent.current_node]
         scatter = ax.scatter(x, y, c=[colors[i % len(colors)]], s=50, label=f'Agent {i}')
         agent_scatters.append(scatter)
+
+    # ボタンの配置
+    from matplotlib.widgets import Button
+
+    ax_play = plt.axes([0.7, 0.01, 0.1, 0.05])    # 再生ボタンの位置
+    ax_pause = plt.axes([0.81, 0.01, 0.1, 0.05])   # 一時停止ボタンの位置
+    ax_step_forward = plt.axes([0.59, 0.01, 0.1, 0.05])  # 進めるボタンの位置
+    ax_step_backward = plt.axes([0.48, 0.01, 0.1, 0.05]) # 巻き戻しボタンの位置
+
+    btn_play = Button(ax_play, 'Play')
+    btn_pause = Button(ax_pause, 'Pause')
+    btn_step_forward = Button(ax_step_forward, 'Forward')
+    btn_step_backward = Button(ax_step_backward, 'Back')
 
     # アニメーションの更新関数
     def update(frame_number):
@@ -126,41 +138,44 @@ def run_simulation():
                 # シミュレーション終了時にアニメーションを停止
                 ani.event_source.stop()
 
-    # キーボードイベントの処理
-    def on_key(event):
-        if event.key == 'left':
-            # 巻き戻し
-            if current_step[0] > 0:
-                pause[0] = True
-                ani.event_source.stop()
-                current_step[0] -= 1
-                model.load_state(current_step[0])
-                for i, agent in enumerate(model.agent_list):
-                    x, y = model.pos[agent.current_node]
-                    agent_scatters[i].set_offsets([x, y])
-                ax.set_title(f"Step {current_step[0]}")
-                fig.canvas.draw()
-        elif event.key == 'right':
-            # 進める
-            if current_step[0] < num_steps:
-                pause[0] = True
-                ani.event_source.stop()
-                model.step()
-                current_step[0] += 1
-                for i, agent in enumerate(model.agent_list):
-                    x, y = model.pos[agent.current_node]
-                    agent_scatters[i].set_offsets([x, y])
-                ax.set_title(f"Step {current_step[0]}")
-                fig.canvas.draw()
-        elif event.key == 'space':
-            # 一時停止/再開
-            pause[0] = not pause[0]
-            if pause[0]:
-                ani.event_source.stop()
-            else:
-                ani.event_source.start()
+    # ボタンのコールバック関数
+    def play(event):
+        pause[0] = False
+        ani.event_source.start()
 
-    fig.canvas.mpl_connect('key_press_event', on_key)
+    def pause_animation(event):
+        pause[0] = True
+        ani.event_source.stop()
+
+    def step_forward(event):
+        if current_step[0] < num_steps:
+            pause[0] = True
+            ani.event_source.stop()
+            model.step()
+            current_step[0] += 1
+            for i, agent in enumerate(model.agent_list):
+                x, y = model.pos[agent.current_node]
+                agent_scatters[i].set_offsets([x, y])
+            ax.set_title(f"Step {current_step[0]}")
+            fig.canvas.draw_idle()
+
+    def step_backward(event):
+        if current_step[0] > 0:
+            pause[0] = True
+            ani.event_source.stop()
+            current_step[0] -= 1
+            model.load_state(current_step[0])
+            for i, agent in enumerate(model.agent_list):
+                x, y = model.pos[agent.current_node]
+                agent_scatters[i].set_offsets([x, y])
+            ax.set_title(f"Step {current_step[0]}")
+            fig.canvas.draw_idle()
+
+    # ボタンにコールバック関数をバインド
+    btn_play.on_clicked(play)
+    btn_pause.on_clicked(pause_animation)
+    btn_step_forward.on_clicked(step_forward)
+    btn_step_backward.on_clicked(step_backward)
 
     ani = animation.FuncAnimation(fig, update, interval=500, repeat=False)
     plt.legend()
