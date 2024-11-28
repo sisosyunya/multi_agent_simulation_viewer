@@ -1,3 +1,4 @@
+from socket import socket
 import osmnx as ox
 import networkx as nx
 import matplotlib.pyplot as plt
@@ -7,6 +8,9 @@ from matplotlib.widgets import Button
 
 from mesa import Agent, Model
 from mesa.time import RandomActivation
+
+import json
+import time
 
 # エージェントの定義
 class RoadAgent(Agent):
@@ -63,6 +67,10 @@ class RoadModel(Model):
         # 初期状態を保存
         self.save_state()
 
+        # GAMA接続用のコネクタを追加
+        self.gama_connector = GamaConnector()
+        self.gama_connector.connect()
+
     def save_state(self):
         # 現在の状態をディープコピーして保存
         state = {
@@ -92,10 +100,32 @@ class RoadModel(Model):
     def step(self):
         self.schedule.step()
         self.save_state()
+        # GAMAへエージェント情報を送信
+        self.send_state_to_gama()
+
+    def send_state_to_gama(self):
+        """GAMAへエージェントの状態を送信"""
+        agent_states = []
+        for agent in self.agent_list:
+            pos = self.pos[agent.current_node]
+            state = {
+                'id': agent.unique_id,
+                'x': pos[0],
+                'y': pos[1],
+                'current_node': agent.current_node,
+                'destination': agent.end_node
+            }
+            agent_states.append(state)
+        
+        self.gama_connector.send_command({
+            'type': 'agent_update',
+            'agents': agent_states
+        })
 
 # シミュレーションとアニメーションの設定
 def run_simulation():
-    model = RoadModel(N=10)  # エージェント数を減らす
+    model = RoadModel(N=10)
+    model.gama_connector.model = model  # モデルの参照を設定
     num_steps = 200
     current_step = [0]  # リストで包むことで、内部関数から変更可能にする
     pause = [False]     # 一時停止のフラグ
@@ -181,5 +211,46 @@ def run_simulation():
     plt.legend()
     plt.show()
 
+class GamaConnector:
+    def __init__(self, host='localhost', port=6868):
+        self.sio = socket.Client()
+        self.host = host
+        self.port = port
+        self.model = None
+        
+        @self.sio.on('gama_update')
+        def on_gama_update(data):
+            """GAMAからの更新を処理"""
+            if self.model:
+                self.update_model_from_gama(data)
+    
+    def update_model_from_gama(self, data):
+        """GAMAからの更新をモデルに反映"""
+        gama_agents = json.loads(data)
+        for gama_agent in gama_agents:
+            agent_id = gama_agent['id']
+            # 対応するエージェントを見つけて更新
+            agent = next((a for a in self.model.agent_list if a.unique_id == agent_id), None)
+            if agent:
+                # 最も近いノードを見つける
+                new_pos = (gama_agent['x'], gama_agent['y'])
+                nearest_node = min(self.model.G.nodes(),
+                                 key=lambda n: ((self.model.pos[n][0] - new_pos[0])**2 +
+                                              (self.model.pos[n][1] - new_pos[1])**2))
+                agent.current_node = nearest_node
+
+def main():
+    gama = GamaConnector()
+    gama.connect()
+    
+    try:
+        while True:
+            # メインループ
+            time.sleep(0.1)  # 更新間隔の調整
+    except KeyboardInterrupt:
+        print('終了します')
+        gama.sio.disconnect()
+
 if __name__ == "__main__":
     run_simulation()
+    main()
