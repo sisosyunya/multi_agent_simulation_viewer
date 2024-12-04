@@ -1,3 +1,5 @@
+# viewer.py
+
 import socketio
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
@@ -17,6 +19,9 @@ received_data = {
     'agents': []
 }
 
+# 履歴を保持するリスト（巻き戻し用）
+history = []
+
 @sio.event
 def connect():
     print('Connected to Flask server.')
@@ -27,19 +32,33 @@ def disconnect():
 
 @sio.on('update')
 def on_update(data):
+    global received_data, history
     print('Received update from Flask:', data)
-    # データをグローバル変数に保存
-    received_data.update(data)
+    try:
+        # 必要なキーが存在するか確認
+        required_keys = {"car_size", "sim_speed", "heatmap_flag", "policies", "agents"}
+        if not required_keys.issubset(data.keys()):
+            raise ValueError("Missing keys in received data")
+        
+        # データをグローバル変数に保存
+        received_data.update(data)
+        
+        # 履歴に追加
+        history.append(data['agents'])
+        if len(history) > 100:  # 最大履歴数
+            history.pop(0)
+    except Exception as e:
+        print(f"Error processing received data: {e}")
 
 def run_viewer():
-    global received_data
+    global received_data, history
     # 地図をプロット（軽量化）
     place = 'Ibarakishi, Osaka, Japan'
     G = ox.graph_from_place(place, network_type='drive')
     fig, ax = ox.plot_graph(G, show=False, close=False, node_size=0, edge_color='gray', bgcolor='white')
     plt.title("Road Simulation Viewer")
     
-    # 車両の散布図をエージェント数に応じて作成
+    # エージェントの散布図をエージェント数に応じて作成
     agent_scatters = {}
     colors = plt.cm.Set1.colors
     num_agents = 10  # 必要に応じて変更
@@ -62,7 +81,6 @@ def run_viewer():
     
     # アニメーションの状態
     current_step = [0]
-    num_steps = 200
     pause_flag = [False]
     
     # アニメーションの更新関数
@@ -79,27 +97,39 @@ def run_viewer():
             ax.set_title(f"Step {current_step[0]}")
             current_step[0] += 1
         return list(agent_scatters.values())
-
+    
     # ボタンのコールバック関数
     def play(event):
         pause_flag[0] = False
         ani.event_source.start()
-
+    
     def pause_animation(event):
         pause_flag[0] = True
         ani.event_source.stop()
-
+    
     def step_forward(event):
-        if current_step[0] < num_steps:
+        if current_step[0] < len(received_data.get('agents', [])):
             pause_flag[0] = True
             ani.event_source.stop()
+            # シミュレーションステップを1つ進める
             update(None)
             fig.canvas.draw_idle()
-
+    
     def step_backward(event):
-        # 巻き戻し機能の実装は複雑です。ここでは単純に現在の状態を再描画
-        print("Step backward is not implemented.")
-
+        if len(history) > 0 and current_step[0] > 0:
+            pause_flag[0] = True
+            ani.event_source.stop()
+            current_step[0] -= 1
+            previous_agents = history[current_step[0]-1]
+            for agent_data in previous_agents:
+                agent_id = agent_data['id']
+                x = agent_data['x']
+                y = agent_data['y']
+                if agent_id in agent_scatters:
+                    agent_scatters[agent_id].set_offsets([x, y])
+            ax.set_title(f"Step {current_step[0]}")
+            fig.canvas.draw_idle()
+    
     # ボタンにコールバック関数をバインド
     btn_play.on_clicked(play)
     btn_pause.on_clicked(pause_animation)
@@ -113,7 +143,11 @@ def run_viewer():
 
 def main():
     # Flaskサーバーに接続
-    sio.connect('http://localhost:8000')
+    try:
+        sio.connect('http://localhost:8000')
+    except socketio.exceptions.ConnectionError as e:
+        print(f"Failed to connect to Flask server: {e}")
+        return
     
     # Viewerを実行
     run_viewer()
