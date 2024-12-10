@@ -1,62 +1,53 @@
-# flask_server.py
-
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-import threading
+from flask import Flask, jsonify
+import random
 
 app = Flask(__name__)
-CORS(app)  # CORSを有効化
 
-# グローバル変数としてデータを保持
-data_lock = threading.Lock()
-received_data = []
+# エージェント数の定義
+NUM_AGENTS = 30
 
-@app.route('/')
-def index():
-    return "Flask Server is Running."
+# エージェントデータの初期化
+agents = []
+gama_references = {}
 
-@app.route('/test', methods=['POST'])
-def test():
-    data = request.json  # GAMA側から送られたJSONを取得
-    print("Received data from GAMA:", data)
-    # 簡単なレスポンスを返す
-    return jsonify({"message": "Received your data", "echo": data}), 200
-
-@app.route('/update', methods=['POST'])
-def update():
-    try:
-        inputData = request.json
-
-        # スレッドセーフにデータを追加
-        with data_lock:
-            received_data.append(inputData)
-            # データ量が多くなりすぎないように最新100件に制限（必要に応じて調整）
-            if len(received_data) > 100:
-                received_data.pop(0)
-        
-        # ログ出力
-        print(f"Received data: {inputData}")
-        
-        return jsonify({"status": "success"}), 200
-    except Exception as e:
-        print(f"Error processing data: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+for i in range(NUM_AGENTS):
+    agent_ref = f'Intersection_model[0].Car[{i}]'
+    agent_data = {
+        'attributes': {
+            'loc': {
+                'x': random.uniform(0, 4000),  # X座標の範囲
+                'y': random.uniform(0, 4000),  # Y座標の範囲
+                'z': 0.0
+            },
+            # 他の属性を必要に応じて追加
+        },
+        'gaml_species': 'Car',
+        'index': i
+    }
+    agents.append({'agent_reference': agent_ref})
+    gama_references[agent_ref] = agent_data
 
 @app.route('/get_data', methods=['GET'])
 def get_data():
-    try:
-        with data_lock:
-            # 最新のデータを返す。全データを返す場合は received_data をそのまま返す
-            # 最新1件のみ返す場合は received_data[-1] を返す
-            # ここでは最新10件を返す例とします
-            latest_data = received_data[-10:] if len(received_data) >= 10 else received_data.copy()
-        
-        print(f"Sending latest data: {latest_data}")
-        return jsonify({"status": "success", "data": latest_data}), 200
-    except Exception as e:
-        print(f"Error fetching data: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+    # 必要に応じてエージェントの位置を更新（例: ランダムに移動）
+    for agent_ref in gama_references:
+        gama_references[agent_ref]['attributes']['loc']['x'] += random.uniform(-10, 10)
+        gama_references[agent_ref]['attributes']['loc']['y'] += random.uniform(-10, 10)
+        # 境界を設定（0 ~ 4000）
+        gama_references[agent_ref]['attributes']['loc']['x'] = max(0, min(4000, gama_references[agent_ref]['attributes']['loc']['x']))
+        gama_references[agent_ref]['attributes']['loc']['y'] = max(0, min(4000, gama_references[agent_ref]['attributes']['loc']['y']))
+    
+    response_data = {
+        'status': 'success',
+        'data': {
+            'gama_contents': {
+                'agents': agents,
+                # 他のコンテンツがあればここに追加
+            },
+            'gama_references': gama_references
+        }
+    }
+    return jsonify(response_data)
 
-if __name__ == "__main__":
-    # Flaskアプリケーションを実行
-    app.run(port=8000, host='0.0.0.0', debug=False)
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=8000)
