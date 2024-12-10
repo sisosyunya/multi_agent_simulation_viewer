@@ -1,159 +1,105 @@
 # viewer.py
 
-import socketio
+import requests
 import matplotlib.pyplot as plt
-import matplotlib.animation as animation
 from matplotlib.widgets import Button
-import networkx as nx
 import osmnx as ox
 
-# SocketIOクライアントの初期化
-sio = socketio.Client()
-
-# グローバル変数で受信データを保持
-received_data = {
-    'car_size': 6,
-    'sim_speed': 0.0,
-    'policies': {'switch1': False, 'switch2': False, 'switch3': False, 'switch4': False},
-    'heatmap_flag': False,
-    'agents': []
-}
-
-# 履歴を保持するリスト（巻き戻し用）
-history = []
-
-@sio.event
-def connect():
-    print('Connected to Flask server.')
-
-@sio.event
-def disconnect():
-    print('Disconnected from Flask server.')
-
-@sio.on('update')
-def on_update(data):
-    global received_data, history
-    print('Received update from Flask:', data)
+# データ取得関数
+def fetch_data():
     try:
-        # 必要なキーが存在するか確認
-        required_keys = {"car_size", "sim_speed", "heatmap_flag", "policies", "agents"}
-        if not required_keys.issubset(data.keys()):
-            raise ValueError("Missing keys in received data")
-        
-        # データをグローバル変数に保存
-        received_data.update(data)
-        
-        # 履歴に追加
-        history.append(data['agents'])
-        if len(history) > 100:  # 最大履歴数
-            history.pop(0)
+        response = requests.get('http://localhost:8000/get_data')
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('status') == 'success':
+                return data.get('data', [])
+            else:
+                print(f"Error from server: {data.get('message')}")
+                return []
+        else:
+            print(f"HTTP Error: {response.status_code}")
+            return []
     except Exception as e:
-        print(f"Error processing received data: {e}")
+        print(f"Error fetching data: {e}")
+        return []
 
-def run_viewer():
-    global received_data, history
-    # 地図をプロット（軽量化）
-    place = 'Ibarakishi, Osaka, Japan'
-    G = ox.graph_from_place(place, network_type='drive')
-    fig, ax = ox.plot_graph(G, show=False, close=False, node_size=0, edge_color='gray', bgcolor='white')
+# プロット更新関数
+def update_plot(ax, scatter, data, place='Ibaraki, Osaka, Japan'):
+    ax.cla()  # 現在の軸をクリア
+    
+    # 地図を再描画
+    try:
+        G = ox.graph_from_place(place, network_type='drive')
+        ox.plot_graph(G, ax=ax, show=False, close=False, node_size=0, edge_color='gray', bgcolor='white')
+    except Exception as e:
+        print(f"Error fetching map data: {e}")
+    
     plt.title("Road Simulation Viewer")
     
-    # エージェントの散布図をエージェント数に応じて作成
-    agent_scatters = {}
-    colors = plt.cm.Set1.colors
-    num_agents = 10  # 必要に応じて変更
-    for i in range(num_agents):
-        scatter = ax.scatter([], [], c=[colors[i % len(colors)]], s=50, label=f'Agent {i}')
-        agent_scatters[i] = scatter
+    # エージェントの座標を抽出
+    x_coords = []
+    y_coords = []
+    for update in data:
+        for agent_id, agent in update.items():
+            if ('attributes' in agent and
+                'loc' in agent['attributes'] and
+                'x' in agent['attributes']['loc'] and
+                'y' in agent['attributes']['loc']):
+                x_coords.append(agent['attributes']['loc']['x'])
+                y_coords.append(agent['attributes']['loc']['y'])
+            else:
+                print(f"Agent data missing 'attributes', 'loc', 'x', or 'y': {agent}")
     
-    plt.legend(loc='upper right')
+    # エージェントの位置を散布図としてプロット
+    scatter = ax.scatter(x_coords, y_coords, c='blue', s=50, label='Agents')
+    
+    # 凡例の設定
+    ax.legend(loc='upper right')
+    
+    plt.draw()
+    return scatter
+
+# Fetchボタンのコールバック関数
+def on_fetch(event, ax, scatter):
+    print("Fetchボタンが押されました。データを取得中...")
+    data = fetch_data()
+    print(f"取得したデータ: {data}")  # デバッグ用
+    if data:
+        scatter = update_plot(ax, scatter, data)
+        print(f"取得したエージェント数: {len(data)}")
+    else:
+        print("データが取得できませんでした。")
+    return scatter
+
+def run_viewer():
+    place = 'Ibaraki, Osaka, Japan'  # 必要に応じて場所を変更
+    try:
+        G = ox.graph_from_place(place, network_type='drive')
+        fig, ax = plt.subplots(figsize=(10, 10))
+        ox.plot_graph(G, ax=ax, show=False, close=False, node_size=0, edge_color='gray', bgcolor='white')
+    except Exception as e:
+        print(f"Error fetching map data: {e}")
+        fig, ax = plt.subplots(figsize=(10, 10))
+        ax.set_title("Road Simulation Viewer")
+    
+    plt.title("Road Simulation Viewer")
+    
+    # 初期の散布図（空）
+    scatter = ax.scatter([], [], c='blue', s=50, label='Agents')
+    ax.legend(loc='upper right')
     
     # ボタンの配置
-    ax_play = plt.axes([0.7, 0.01, 0.1, 0.05])    # 再生ボタンの位置
-    ax_pause = plt.axes([0.81, 0.01, 0.1, 0.05])   # 一時停止ボタンの位置
-    ax_step_forward = plt.axes([0.59, 0.01, 0.1, 0.05])  # 進めるボタンの位置
-    ax_step_backward = plt.axes([0.48, 0.01, 0.1, 0.05]) # 巻き戻しボタンの位置
-    
-    btn_play = Button(ax_play, 'Play')
-    btn_pause = Button(ax_pause, 'Pause')
-    btn_step_forward = Button(ax_step_forward, 'Forward')
-    btn_step_backward = Button(ax_step_backward, 'Back')
-    
-    # アニメーションの状態
-    current_step = [0]
-    pause_flag = [False]
-    
-    # アニメーションの更新関数
-    def update(frame_number):
-        if not pause_flag[0]:
-            # シミュレーションの状態を元に車両の位置を更新
-            agents = received_data.get('agents', [])
-            for agent_data in agents:
-                agent_id = agent_data['id']
-                x = agent_data['x']
-                y = agent_data['y']
-                if agent_id in agent_scatters:
-                    agent_scatters[agent_id].set_offsets([x, y])
-            ax.set_title(f"Step {current_step[0]}")
-            current_step[0] += 1
-        return list(agent_scatters.values())
-    
-    # ボタンのコールバック関数
-    def play(event):
-        pause_flag[0] = False
-        ani.event_source.start()
-    
-    def pause_animation(event):
-        pause_flag[0] = True
-        ani.event_source.stop()
-    
-    def step_forward(event):
-        if current_step[0] < len(received_data.get('agents', [])):
-            pause_flag[0] = True
-            ani.event_source.stop()
-            # シミュレーションステップを1つ進める
-            update(None)
-            fig.canvas.draw_idle()
-    
-    def step_backward(event):
-        if len(history) > 0 and current_step[0] > 0:
-            pause_flag[0] = True
-            ani.event_source.stop()
-            current_step[0] -= 1
-            previous_agents = history[current_step[0]-1]
-            for agent_data in previous_agents:
-                agent_id = agent_data['id']
-                x = agent_data['x']
-                y = agent_data['y']
-                if agent_id in agent_scatters:
-                    agent_scatters[agent_id].set_offsets([x, y])
-            ax.set_title(f"Step {current_step[0]}")
-            fig.canvas.draw_idle()
+    ax_fetch = plt.axes([0.7, 0.02, 0.1, 0.05])  # Fetchボタンの位置
+    btn_fetch = Button(ax_fetch, 'Fetch')
     
     # ボタンにコールバック関数をバインド
-    btn_play.on_clicked(play)
-    btn_pause.on_clicked(pause_animation)
-    btn_step_forward.on_clicked(step_forward)
-    btn_step_backward.on_clicked(step_backward)
+    def fetch_callback(event):
+        nonlocal scatter
+        scatter = on_fetch(event, ax, scatter)
     
-    # アニメーションの設定
-    ani = animation.FuncAnimation(fig, update, interval=500, repeat=False)
+    btn_fetch.on_clicked(fetch_callback)
     
     plt.show()
 
-def main():
-    # Flaskサーバーに接続
-    try:
-        sio.connect('http://localhost:8000')
-    except socketio.exceptions.ConnectionError as e:
-        print(f"Failed to connect to Flask server: {e}")
-        return
-    
-    # Viewerを実行
-    run_viewer()
-    
-    # Flaskサーバーからのデータ受信を待つ
-    sio.wait()
-
 if __name__ == "__main__":
-    main()
+    run_viewer()
