@@ -3,160 +3,179 @@
 import requests
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Button
+import time
+import threading
 
-# データ取得関数
-def fetch_data():
-    try:
-        response = requests.get('http://localhost:8000/get_data')
-        if response.status_code == 200:
-            data = response.json()
-            print(f"取得したデータの型: {type(data)}")  # デバッグ用
-            print(f"取得したデータ: {data}")           # デバッグ用
-            if isinstance(data, dict) and data.get('status') == 'success':
-                return data.get('data', {})  # デフォルトを辞書に変更
-            elif isinstance(data, list):
-                return data  # データがリストの場合そのまま返す
-            else:
-                print(f"Error from server: {data.get('message') if isinstance(data, dict) else 'No message'}")
-                return {}
-        else:
-            print(f"HTTP Error: {response.status_code}")
-            return {}
-    except Exception as e:
-        print(f"Error fetching data: {e}")
-        return {}
+class SimulationViewer:
+    def __init__(self):
+        self.fig, ax = plt.subplots(figsize=(10, 10))
+        self.fig.subplots_adjust(bottom=0.15)
+        self.ax = ax
+        self.ax.set_facecolor('white')
+        
+        # 状態管理
+        self.history = []
+        self.current_index = -1
+        self.is_playing = False
+        self.timer = None  # タイマーオブジェクトを保持
+        self.scatter = None
+        
+        self.setup_plot()
+        self.setup_controls()
+    
+    def setup_plot(self):
+        self.scatter = self.ax.scatter([], [], c='blue', s=50, label='Agents')
+        self.ax.legend(loc='upper right')
+        self.update_title()
+    
+    def setup_controls(self):
+        # ボタンの配置設定
+        fetch_width, fetch_height = 0.2, 0.075
+        btn_width, btn_height = 0.1, 0.075
+        gap = 0.02
+        
+        # Fetchボタン（左）
+        self.ax_fetch = plt.axes([0.1, 0.05, fetch_width, fetch_height])
+        self.btn_fetch = Button(self.ax_fetch, 'Fetch', color='lightblue')
+        
+        # 巻き戻しボタン
+        self.ax_back = plt.axes([0.35, 0.05, btn_width, btn_height])
+        self.btn_back = Button(self.ax_back, 'Back')
+        
+        # 再生/一時停止ボタン
+        self.ax_play = plt.axes([0.47, 0.05, btn_width, btn_height])
+        self.btn_play = Button(self.ax_play, '▶')
+        
+        # コールバックの設定
+        self.btn_fetch.on_clicked(self.on_fetch)
+        self.btn_back.on_clicked(self.on_back)
+        self.btn_play.on_clicked(self.on_play_pause)
 
-# プロット更新関数
-def update_plot(ax, scatter, data):
-    ax.cla()  # 現在の軸をクリア
+    def update_title(self):
+        frame_info = f" (Frame: {self.current_index + 1}/{len(self.history)})" if self.history else ""
+        plt.title(f"Road Simulation Viewer{frame_info}")
 
-    plt.title("Road Simulation Viewer")
+    def fetch_data(self):
+        try:
+            response = requests.get('http://localhost:8000/get_data')
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('status') == 'success':
+                    return data.get('data', {})
+            return None
+        except Exception as e:
+            print(f"Error fetching data: {e}")
+            return None
 
-    if isinstance(data, dict):
-        # 'gama_contents'と'gama_references'を取得
-        gama_contents = data.get('gama_contents', {})
-        gama_references = data.get('gama_references', {})
+    def update_plot(self, data):
+        if not data:
+            return
 
-        # エージェントのリストを取得
-        agents = gama_contents.get('agents', [])
-
-        if not agents:
-            print("No agents found in 'gama_contents'.")
-            return scatter
-
-        # エージェントの座標を抽出
-        x_coords = []
-        y_coords = []
-        for agent in agents:
-            agent_ref = agent.get('agent_reference')
-            if not agent_ref:
-                print("Agent entry missing 'agent_reference'.")
-                continue
-
-            agent_data = gama_references.get(agent_ref, {})
-            attributes = agent_data.get('attributes', {})
-            loc = attributes.get('loc', {})
-
-            x = loc.get('x')
-            y = loc.get('y')
-
-            if x is not None and y is not None:
-                x_coords.append(x)
-                y_coords.append(y)
-            else:
-                print(f"Agent '{agent_ref}' missing 'x' or 'y' in 'loc'.")
-
-    elif isinstance(data, list):
-        # データがリストの場合
-        agents = data
-        x_coords = []
-        y_coords = []
-        for agent in agents:
-            attributes = agent.get('attributes', {})
-            loc = attributes.get('loc', {})
-            x = loc.get('x')
-            y = loc.get('y')
-            if x is not None and y is not None:
-                x_coords.append(x)
-                y_coords.append(y)
-            else:
-                print(f"Agent missing 'x' or 'y' in 'loc': {agent}")
-
-    else:
-        print(f"Unexpected data format: {type(data)}")
-        return scatter
-
-    if not x_coords or not y_coords:
-        print("No valid agent coordinates to plot.")
-        return scatter
-
-    # 座標の最小値と最大値を計算
-    min_x, max_x = min(x_coords), max(x_coords)
-    min_y, max_y = min(y_coords), max(y_coords)
-    print(f"座標範囲 - X: {min_x} ~ {max_x}, Y: {min_y} ~ {max_y}")
-
-    # プロット範囲の設定（動的バッファ）
-    buffer_ratio = 0.1  # 座標範囲の10%をバッファとする
-    buffer_x = (max_x - min_x) * buffer_ratio
-    buffer_y = (max_y - min_y) * buffer_ratio
-    ax.set_xlim(min_x - buffer_x, max_x + buffer_x)
-    ax.set_ylim(min_y - buffer_y, max_y + buffer_y)
-
-    # エージェントの位置を散布図としてプロット
-    scatter = ax.scatter(x_coords, y_coords, c='blue', s=50, label='Agents')
-
-    # 凡例の設定
-    ax.legend(loc='upper right')
-
-    plt.draw()
-    return scatter
-
-# Fetchボタンのコールバック関数
-def on_fetch(event, ax, scatter):
-    print("Fetchボタンが押されました。データを取得中...")
-    data = fetch_data()
-    # print(f"取得したデータ: {data}")  # デバッグ用
-
-    if data:
-        scatter = update_plot(ax, scatter, data)
-        # エージェント数の計算
+        # 現在のプロットをクリア
+        self.ax.cla()
+        
         if isinstance(data, dict):
             gama_contents = data.get('gama_contents', {})
+            gama_references = data.get('gama_references', {})
             agents = gama_contents.get('agents', [])
-            agent_count = len(agents)
-        elif isinstance(data, list):
-            agents = data
-            agent_count = len(agents)
+
+            x_coords = []
+            y_coords = []
+            for agent in agents:
+                agent_ref = agent.get('agent_reference')
+                if agent_ref:
+                    agent_data = gama_references.get(agent_ref, {})
+                    loc = agent_data.get('attributes', {}).get('loc', {})
+                    x = loc.get('x')
+                    y = loc.get('y')
+                    if x is not None and y is not None:
+                        x_coords.append(x)
+                        y_coords.append(y)
+
+            if x_coords and y_coords:
+                buffer_ratio = 0.1
+                min_x, max_x = min(x_coords), max(x_coords)
+                min_y, max_y = min(y_coords), max(y_coords)
+                buffer_x = (max_x - min_x) * buffer_ratio
+                buffer_y = (max_y - min_y) * buffer_ratio
+                
+                self.ax.set_xlim(min_x - buffer_x, max_x + buffer_x)
+                self.ax.set_ylim(min_y - buffer_y, max_y + buffer_y)
+                self.scatter = self.ax.scatter(x_coords, y_coords, c='blue', s=50, label='Agents')
+                self.ax.legend(loc='upper right')
+
+        # タイトル更新（フレーム番号を含む）
+        frame_info = f" (Frame: {self.current_index + 1}/{len(self.history)})" if self.history else ""
+        self.ax.set_title(f"Road Simulation Viewer{frame_info}")
+
+        # コリッドの表示
+        self.ax.grid(True)
+        
+        # 描画の更新
+        self.fig.canvas.draw()
+        self.fig.canvas.flush_events()
+
+    def on_fetch(self, event):
+        data = self.fetch_data()
+        if data:
+            # データを履歴に追加
+            self.history.append(data)
+            self.current_index = len(self.history) - 1
+            self.update_plot(data)
+            
+            # デバッグ情報の出力
+            print(f"Fetched data: Frame {self.current_index + 1}")
+            print(f"Total frames in history: {len(self.history)}")
+
+    def on_back(self, event):
+        if self.history and self.current_index > 0:
+            # 一つ前のフレームに戻る
+            self.current_index -= 1
+            self.update_plot(self.history[self.current_index])
+            
+            # 再生中の場合は停止する
+            if self.is_playing:
+                self.is_playing = False
+                self.btn_play.label.set_text('▶')
+                self.btn_play.ax.figure.canvas.draw()
+
+    def on_play_pause(self, event):
+        self.is_playing = not self.is_playing
+        if self.is_playing:
+            # 再生開始
+            self.btn_play.label.set_text('Stop')
+            # アニメーションを開始
+            self._animate()
         else:
-            agent_count = 0
-        print(f"取得したエージェント数: {agent_count}")
-    else:
-        print("データが取得できませんでした。")
-    return scatter
+            # 一時停止
+            self.btn_play.label.set_text('▶')
+        
+        # ボタンを再描画
+        self.btn_play.ax.figure.canvas.draw()
 
-def run_viewer():
-    # 白背景のプロットを作成
-    fig, ax = plt.subplots(figsize=(10, 10))
-    fig.subplots_adjust(bottom=0.15)  # ボタンのスペースを確保
-    ax.set_facecolor('white')
-    plt.title("Road Simulation Viewer")
+    def _animate(self):
+        """メインスレッドでアニメーションを実行"""
+        if self.is_playing and self.current_index < len(self.history) - 1:
+            self.current_index += 1
+            self.update_plot(self.history[self.current_index])
+            # 次のフレームをスケジュール
+            self.fig.canvas.draw()
+            self.fig.canvas.flush_events()
+            self.timer = self.fig.canvas.new_timer(interval=500)  # 500ms = 0.5秒
+            self.timer.add_callback(self._animate)
+            self.timer.start()
+        else:
+            # アニメーション終了時の処理
+            self.is_playing = False
+            self.btn_play.label.set_text('▶')
+            self.btn_play.ax.figure.canvas.draw()
 
-    # 初期の散布図（空）
-    scatter = ax.scatter([], [], c='blue', s=50, label='Agents')
-    ax.legend(loc='upper right')
+    def run(self):
+        plt.show()
 
-    # ボタンの配置
-    ax_fetch = plt.axes([0.4, 0.05, 0.2, 0.075])  # Fetchボタンの位置とサイズ
-    btn_fetch = Button(ax_fetch, 'Fetch')
-
-    # ボタンにコールバック関数をバインド
-    def fetch_callback(event):
-        nonlocal scatter
-        scatter = on_fetch(event, ax, scatter)
-
-    btn_fetch.on_clicked(fetch_callback)
-
-    plt.show()
+def main():
+    viewer = SimulationViewer()
+    viewer.run()
 
 if __name__ == "__main__":
-    run_viewer()
+    main()
