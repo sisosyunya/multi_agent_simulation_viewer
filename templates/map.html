@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>南草津マップ</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    #canvasContainer {
+      position: relative;
+      width: 800px;
+      height: 600px;
+      border: 1px solid #ccc;
+    }
+    #mapCanvas {
+      position: absolute; top:0; left:0;
+      width: 800px; height: 600px;
+      background: #f2f2f2;
+    }
+    #agentCanvas {
+      position: absolute; top:0; left:0;
+      width: 800px; height: 600px;
+      pointer-events: none;
+    }
+    #controls {
+      margin-top: 10px;
+    }
+    button {
+      margin-right: 6px;
+    }
+  </style>
+</head>
+<body>
+  <h1>南草津マップ (エージェント表示あり)</h1>
+  
+  <div id="canvasContainer">
+    <canvas id="mapCanvas" width="800" height="600"></canvas>
+    <canvas id="agentCanvas" width="800" height="600"></canvas>
+  </div>
+
+  <div id="controls">
+    <button onclick="pauseSimulation()">Pause</button>
+    <button onclick="resumeSimulation()">Resume</button>
+    <button onclick="rewindFrame()">Rewind</button>
+    <button onclick="forwardFrame()">Forward</button>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="{{ url_for('static', filename='map.js') }}"></script>
+</body>
+</html>

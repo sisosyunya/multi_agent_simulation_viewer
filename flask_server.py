@@ -1,53 +1,56 @@
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 import random
 
 app = Flask(__name__)
 
-# エージェント数の定義
-NUM_AGENTS = 30
+# ---- グローバル変数（GAMAからのエージェント情報を格納）----
+agents = []           # [{ 'agent_reference': 'xxx' }, ... ]
+gama_references = {}  # { 'Intersection_model[0].Car[0]': {...}, ... }
 
-# エージェントデータの初期化
-agents = []
-gama_references = {}
+# -------------------------------
+#  ① GAMAからデータを受け取るためのエンドポイント
+# -------------------------------
+@app.route("/data_from_gama", methods=["POST"])
+def data_from_gama():
+    """
+    GAMAシミュレーション側がPOSTするエージェントの位置・状態情報を受け取る。
+    受け取ったデータをグローバル変数に保存。
+    """
+    data = request.get_json()  # 例: {'agents': [...], 'gama_references': {...}}
+    if not data:
+        return jsonify({"status": "error", "message": "No data received"}), 400
 
-for i in range(NUM_AGENTS):
-    agent_ref = f'Intersection_model[0].Car[{i}]'
-    agent_data = {
-        'attributes': {
-            'loc': {
-                'x': random.uniform(0, 4000),  # X座標の範囲
-                'y': random.uniform(0, 4000),  # Y座標の範囲
-                'z': 0.0
-            },
-            # 他の属性を必要に応じて追加
-        },
-        'gaml_species': 'Car',
-        'index': i
-    }
-    agents.append({'agent_reference': agent_ref})
-    gama_references[agent_ref] = agent_data
+    # data は { 'agents': [...], 'gama_references': {...} } の形式を想定
+    global agents, gama_references
+    agents = data.get('agents', [])
+    gama_references = data.get('gama_references', {})
 
+    print(f"Received from GAMA: {len(agents)} agents.")
+    return jsonify({"status": "success"}), 200
+
+
+# -------------------------------
+#  ② Viewer から可視化用にエージェント情報を返すエンドポイント
+# -------------------------------
 @app.route('/get_data', methods=['GET'])
 def get_data():
-    # 必要に応じてエージェントの位置を更新（例: ランダムに移動）
-    for agent_ref in gama_references:
-        gama_references[agent_ref]['attributes']['loc']['x'] += random.uniform(-10, 10)
-        gama_references[agent_ref]['attributes']['loc']['y'] += random.uniform(-10, 10)
-        # 境界を設定（0 ~ 4000）
-        gama_references[agent_ref]['attributes']['loc']['x'] = max(0, min(4000, gama_references[agent_ref]['attributes']['loc']['x']))
-        gama_references[agent_ref]['attributes']['loc']['y'] = max(0, min(4000, gama_references[agent_ref]['attributes']['loc']['y']))
-    
+    """
+    Viewer (matplotlib等)がアクセスし、GAMAから受け取った最新のエージェント位置情報を返す。
+    """
     response_data = {
         'status': 'success',
         'data': {
             'gama_contents': {
-                'agents': agents,
-                # 他のコンテンツがあればここに追加
+                'agents': agents
             },
             'gama_references': gama_references
         }
     }
     return jsonify(response_data)
 
+# -------------------------------
+#   メイン
+# -------------------------------
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8000)
+    # Flaskを起動 (portやhostは環境に合わせて調整)
+    app.run(host='0.0.0.0', port=8000, debug=True)

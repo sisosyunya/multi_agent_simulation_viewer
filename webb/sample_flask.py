@@ -6,7 +6,6 @@ import time
 
 app = Flask(__name__, static_folder='.', static_url_path='')
 
-
 # データ
 car_size = 6 #車のサイズ
 sim_speed = 0.0 #シミュレーションの速度
