@@ -1,286 +1,204 @@
-// static/map.js
-
 console.log("[map.js] start loading...");
 
-// --- Canvas取得 ---
-const canvas = document.getElementById('mapCanvas');
+// ---------- Canvas取得 ----------
+// キャンバス
+const mapCanvas = document.getElementById('mapCanvas');
+const ctx = mapCanvas.getContext('2d');
 const highlightCanvas = document.getElementById('highlightCanvas');
-
-if (!canvas || !highlightCanvas) {
-    console.error("[map.js] ERROR: Canvas elements not found!");
-}
-
-// 2Dコンテキスト
-const ctx = canvas.getContext('2d');
 const highlightCtx = highlightCanvas.getContext('2d');
 
-const canvasHeight = canvas.height;
+const canvasHeight = mapCanvas.height;
+const canvasWidth = mapCanvas.width;
 
-// スケーリング用パラメータ(適宜調整)
+// スケーリング例
 const scale = 0.45;
 const offsetX = -13550000;
 const offsetY = -3480000;
 const xmove = 19735;
 const ymove = 8780;
 
-// キャンバスの初期クリア
-ctx.clearRect(0, 0, canvas.width, canvas.height);
-highlightCtx.clearRect(0, 0, highlightCanvas.width, highlightCanvas.height);
+// フレーム管理 (クライアント側でも現在のframeIndexを保持)
+let currentFrame = 0;
+let isPlaying = false; // 再生中かどうか
+let playTimer = null;  // setInterval用
 
-// ロード完了ログ
-console.log("[map.js] Canvas width/height =", canvas.width, canvas.height);
-
-// --------------------
-// 1) 道路データを描画
-// --------------------
+// ---- roads, buildings などの描画 (初期マップ) ----
 fetch('/roads')
-    .then(response => {
-        if (!response.ok) {
-            throw new Error(`Fetch /roads failed: ${response.status}`);
-        }
-        return response.json();
-    })
-    .then(data => {
-        console.log("[map.js] /roads fetched:", data.length, "features");
-        data.forEach(feature => {
-            drawGeometry(feature.geometry);
-        });
-    })
-    .catch(err => {
-        console.error("[map.js] Error fetching /roads:", err);
-    });
+  .then(r => r.json())
+  .then(roadData => {
+    console.log("[map.js] /roads fetched:", roadData.length, "features");
+    roadData.forEach(feature => drawGeometry(feature.geometry, ctx));
+  });
 
-// --------------------
-// 2) 建物データを描画
-// --------------------
 fetch('/buildings')
-    .then(response => {
-        if (!response.ok) {
-            throw new Error(`Fetch /buildings failed: ${response.status}`);
-        }
-        return response.json();
-    })
-    .then(data => {
-        console.log("[map.js] /buildings fetched:", data.length, "features");
-        data.forEach(feature => {
-            drawGeometry(feature.geometry);
-        });
-    })
-    .catch(err => {
-        console.error("[map.js] Error fetching /buildings:", err);
-    });
+  .then(r => r.json())
+  .then(buildingData => {
+    console.log("[map.js] /buildings fetched:", buildingData.length, "features");
+    buildingData.forEach(feature => drawGeometry(feature.geometry, ctx));
+  });
 
-// --------------------
-// 図形描画用関数
-// --------------------
-function drawGeometry(geometry) {
-    if (!geometry) return;
-    if (geometry.type === "Polygon") {
-        geometry.coordinates.forEach(ring => {
-            drawPolygon(ring);
-        });
-    } else if (geometry.type === "LineString") {
-        drawLineString(geometry.coordinates, 'black');
-    }
+// テスト用: geometry描画関数
+function drawGeometry(geometry, context) {
+  if (!geometry) return;
+  if (geometry.type === "Polygon") {
+    geometry.coordinates.forEach(ring => {
+      context.beginPath();
+      ring.forEach(([x, y], idx) => {
+        const px = (x+offsetX)*scale - xmove;
+        const py = canvasHeight - ((y+offsetY)*scale - ymove);
+        if (idx===0) context.moveTo(px, py);
+        else context.lineTo(px, py);
+      });
+      context.closePath();
+      context.fillStyle = "rgba(0,0,255,0.3)";
+      context.fill();
+    });
+  } else if (geometry.type === "LineString") {
+    context.strokeStyle = "black";
+    context.lineWidth = 1;
+    context.beginPath();
+    geometry.coordinates.forEach(([x,y], idx) => {
+      const px = (x+offsetX)*scale - xmove;
+      const py = canvasHeight - ((y+offsetY)*scale - ymove);
+      if (idx===0) context.moveTo(px,py);
+      else context.lineTo(px,py);
+    });
+    context.stroke();
+  }
 }
 
-function drawPolygon(coordinates) {
-    ctx.beginPath();
-    coordinates.forEach(([x, y], index) => {
-        const px = (x + offsetX) * scale - xmove;
-        const py = canvasHeight - ((y + offsetY) * scale - ymove);
-        if (index === 0) {
-            ctx.moveTo(px, py);
-        } else {
-            ctx.lineTo(px, py);
-        }
-    });
-    ctx.closePath();
-    ctx.fillStyle = "rgba(0, 0, 255, 0.3)";
-    ctx.fill();
-}
+console.log("[map.js] start loading...");
 
-function drawLineString(coordinates, color) {
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    coordinates.forEach(([x, y], index) => {
-        const px = (x + offsetX) * scale - xmove;
-        const py = canvasHeight - ((y + offsetY) * scale - ymove);
-        if (index === 0) {
-            ctx.moveTo(px, py);
-        } else {
-            ctx.lineTo(px, py);
-        }
-    });
-    ctx.stroke();
-}
 
-// クリックイベント
-// --------------------
-highlightCanvas.addEventListener('click', event => {
-    // クリック座標の計算 (canvas座標に変換)
-    const rect = highlightCanvas.getBoundingClientRect();
-    const clickX = event.clientX - rect.left;
-    const clickY = canvasHeight - (event.clientY - rect.top);
+const frameInfo = document.getElementById('frameInfo');
 
-    console.log(`Clicked at canvas coords: (${clickX}, ${clickY})`);
+// ボタン
+const rewindBtn = document.getElementById('rewindBtn');
+const pauseBtn  = document.getElementById('pauseBtn');
+const playBtn   = document.getElementById('playBtn');
 
-    // クリックされた可能性のある feature を探す
-    // 1. 道路(LineString)判定
-    fetch('/roads')
-        .then(response => response.json())
-        .then(roadData => {
-            let clickedRoad = null;
-            roadData.forEach(feature => {
-                if (feature.geometry.type === "LineString") {
-                    const coords = feature.geometry.coordinates.map(
-                        ([x, y]) => [(x + offsetX) * scale - xmove, (y + offsetY) * scale - ymove]
-                    );
-                    // 各セグメントに対して距離を測り、一定閾値内ならクリックとみなす
-                    for (let i = 0; i < coords.length - 1; i++) {
-                        const [x1, y1] = coords[i];
-                        const [x2, y2] = coords[i + 1];
-                        const distance = pointToLineDistance(clickX, clickY, x1, y1, x2, y2);
-                        if (distance < 6) {  // しきい値 (ピクセル)
-                            console.log("Clicked near line:", feature.properties);
-                            clickedRoad = feature;
-                            break;
-                        }
-                    }
-                }
-            });
-            if (clickedRoad) {
-                // 道路がクリックされた
-                highlightCtx.clearRect(0, 0, highlightCanvas.width, highlightCanvas.height);
-                highlightLineString(clickedRoad.geometry.coordinates);
-
-                // ポップアップ表示
-                const { road_id, length, maxspeed, oneway } = clickedRoad.properties;
-                const onewayText = (oneway === 0) ? '対面' : '一通';
-                const customMessage = `
-                    道路ID: ${road_id}
-                    距離: ${length} m
-                    最大速度: ${maxspeed} km/h
-                    種類: ${onewayText}
-                `;
-                showPopup(customMessage);
-
-                // サーバーへ road_id を送信
-                fetch('/clicked_road_id', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(road_id)
-                })
-                    .then(res => res.json())
-                    .then(result => console.log("Server response:", result))
-                    .catch(err => console.error(err));
-
-            } else {
-                // 建物(Polygon)の可能性をチェック
-                fetch('/buildings')
-                    .then(resp => resp.json())
-                    .then(buildingData => {
-                        let clickedBuilding = null;
-                        buildingData.forEach(feature => {
-                            if (feature.geometry.type === "Polygon") {
-                                // Polygon の各 ring をチェック
-                                const rings = feature.geometry.coordinates;
-                                rings.forEach(ring => {
-                                    // ring[] = [[lng,lat],[lng,lat],...]
-                                    // クリック判定用にスケーリング
-                                    const scaledCoords = ring.map(([x, y]) => {
-                                        return [(x + offsetX) * scale - xmove, (y + offsetY) * scale - ymove];
-                                    });
-                                    if (pointInPolygon(clickX, clickY, scaledCoords)) {
-                                        clickedBuilding = feature;
-                                    }
-                                });
-                            }
-                        });
-                        if (clickedBuilding) {
-                            // 建物がクリックされた
-                            highlightCtx.clearRect(0, 0, highlightCanvas.width, highlightCanvas.height);
-                            highlightPolygon(clickedBuilding.geometry.coordinates);
-
-                            const { building_id, name, floors } = clickedBuilding.properties || {};
-                            const customMessage = `
-                                建物ID: ${building_id || '不明'}
-                                名称: ${name || '不明'}
-                                階数: ${floors || '-'}
-                            `;
-                            showPopup(customMessage);
-
-                            // サーバーへ building_id を送信 (例: '/clicked_road_id' 使い回しでも可)
-                            fetch('/clicked_road_id', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify(building_id || -1)
-                            })
-                                .then(r => r.json())
-                                .then(res => console.log("Server building response:", res))
-                                .catch(err => console.error(err));
-                        } else {
-                            // どこもクリックしていない場合、ポップアップ消す
-                            popup.style.display = 'none';
-                            highlightCtx.clearRect(0, 0, highlightCanvas.width, highlightCanvas.height);
-                        }
-                    })
-                    .catch(err => console.error("Error fetching buildings for click check:", err));
-            }
-        })
-        .catch(err => console.error("Error fetching roads for click check:", err));
+// ボタンのイベント (例)
+rewindBtn.addEventListener('click', () => {
+  console.log("[map.js] Rewind clicked");
+  // fetch('/rewind') ... or client-side logic
+});
+pauseBtn.addEventListener('click', () => {
+  console.log("[map.js] Pause clicked");
+});
+playBtn.addEventListener('click', () => {
+  console.log("[map.js] Play clicked");
 });
 
-// --------------------
-// ハイライト関数
-// --------------------
-function highlightLineString(coordinates) {
-    highlightCtx.strokeStyle = 'rgba(255, 0, 0, 0.9)';
-    highlightCtx.lineWidth = 5;
+// roads, buildings の読み込みなど...
+// 省略
+
+console.log("[map.js] end loading");
+// 巻き戻し
+rewindBtn.addEventListener('click', () => {
+  fetch('/rewind', {method:'POST'})
+    .then(r => r.json())
+    .then(data => {
+      console.log("[map.js] rewound:", data);
+      currentFrame = data.frame;
+      updateFrameDisplay();
+      // フレームを取得して描画
+      getFrameAndDraw(currentFrame);
+    })
+    .catch(err => console.error(err));
+});
+
+// 一時停止
+pauseBtn.addEventListener('click', () => {
+  fetch('/pause', {method:'POST'})
+    .then(r => r.json())
+    .then(data => {
+      console.log("[map.js] paused:", data);
+      isPlaying = false;
+      stopPlaying();
+    })
+    .catch(err => console.error(err));
+});
+
+// 再生 (自動インクリメント)
+playBtn.addEventListener('click', () => {
+  fetch('/resume', {method:'POST'})
+    .then(r => r.json())
+    .then(data => {
+      console.log("[map.js] resumed:", data);
+      isPlaying = true;
+      startPlaying();
+    })
+    .catch(err => console.error(err));
+});
+
+function updateFrameDisplay() {
+  frameInfo.innerText = `Frame: ${currentFrame}`;
+}
+
+// フレームを取得して描画 (サーバーの /get_frame?frameIndex=... などでもOK)
+// ここでは例として /get_frame を使う
+function getFrameAndDraw(frameIndex) {
+  fetch('/get_frame')
+    .then(r => r.json())
+    .then(resp => {
+      if (resp.status === 'success') {
+        currentFrame = resp.frameIndex;
+        updateFrameDisplay();
+        // フレームデータを描画 (エージェントなど)
+        drawAgents(resp.frameData);
+      } else {
+        console.log("[map.js] get_frame empty or error");
+      }
+    })
+    .catch(err => console.error(err));
+}
+
+// エージェント描画の例
+function drawAgents(frameData) {
+  highlightCtx.clearRect(0, 0, highlightCanvas.width, highlightCanvas.height);
+  if (!frameData) return;
+
+  // 例: frameData = { agents:[...], gama_references:{...} }
+  const agents = frameData.agents || [];
+  const refs   = frameData.gama_references || {};
+
+  highlightCtx.fillStyle = "red";
+  agents.forEach(agent => {
+    const ref = agent.agent_reference;
+    const info = refs[ref];
+    if (!info) return;
+    const loc = info.attributes?.loc;
+    if (!loc) return;
+
+    const px = (loc.x + offsetX)*scale - xmove;
+    const py = highlightCanvas.height - ((loc.y + offsetY)*scale - ymove);
     highlightCtx.beginPath();
-    coordinates.forEach(([x, y], index) => {
-        const scaledX = (x + offsetX) * scale - xmove;
-        const scaledY = canvasHeight - ((y + offsetY) * scale - ymove);
-        if (index === 0) {
-            highlightCtx.moveTo(scaledX, scaledY);
-        } else {
-            highlightCtx.lineTo(scaledX, scaledY);
-        }
-    });
-    highlightCtx.stroke();
+    highlightCtx.arc(px, py, 5, 0, 2*Math.PI);
+    highlightCtx.fill();
+  });
 }
 
-function highlightPolygon(rings) {
-    // Polygon の各リングを描画
-    highlightCtx.strokeStyle = 'rgba(255, 0, 0, 0.9)';
-    highlightCtx.lineWidth = 4;
-    highlightCtx.fillStyle = 'rgba(255, 0, 0, 0.3)';
-    rings.forEach((ring, ringIndex) => {
-        highlightCtx.beginPath();
-        ring.forEach(([x, y], index) => {
-            const scaledX = (x + offsetX) * scale - xmove;
-            const scaledY = canvasHeight - ((y + offsetY) * scale - ymove);
-            if (index === 0) {
-                highlightCtx.moveTo(scaledX, scaledY);
-            } else {
-                highlightCtx.lineTo(scaledX, scaledY);
-            }
-        });
-        highlightCtx.closePath();
-        highlightCtx.fill();
-        highlightCtx.stroke();
-    });
+// 自動再生 (setInterval)
+function startPlaying() {
+  stopPlaying(); // 二重開始を防ぐ
+  playTimer = setInterval(() => {
+    // 次のフレームを描画
+    currentFrame++;
+    getFrameAndDraw(currentFrame);
+  }, 1000); // 1秒に1フレーム進む例
 }
 
-// --------------------
-// ポップアップ表示
-// --------------------
-function showPopup(message) {
-    popupContent.innerText = message;
-    // キャンバスの位置を計算し、少し下にポップアップを表示
-    const canvasRect = canvas.getBoundingClientRect();
-    popup.style.left = canvasRect.left + 'px';
-    popup.style.top = (canvasRect.bottom + window.scrollY + 20) + 'px';
-    popup.style.display = 'block';
+function stopPlaying() {
+  if (playTimer) {
+    clearInterval(playTimer);
+    playTimer = null;
+  }
 }
+
+function init() {
+  updateFrameDisplay();
+  // もし最初のフレームを描画したければ getFrameAndDraw(0) など
+}
+init();
+
+console.log("[map.js] end loading");

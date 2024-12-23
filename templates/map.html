@@ -3,14 +3,17 @@
 
 <head>
     <meta charset="UTF-8">
-    <title>南草津マップ</title>
+    <title>南草津マップ + Player UI</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
+        /* キャンバス関係 */
         #canvasContainer {
             position: relative;
             width: 800px;
+            margin: 0 auto;   /* ←これで中央寄せ */
             height: 600px;
             border: 1px solid #ccc;
+            margin-bottom: 20px;
         }
 
         #mapCanvas {
@@ -39,26 +42,82 @@
             padding: 6px;
             z-index: 999;
         }
+
+        /* リッチUIデザイン */
+        #controlPanel {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 14px;
+            width: 400px;
+            margin: 0 auto;
+            /* フローティングにするなら: 
+      position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+      */
+            padding: 10px;
+            background: linear-gradient(135deg, #e7e7e7, #ffffff);
+            border-radius: 10px;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+            font-family: 'Roboto', sans-serif;
+        }
+
+        .control-button {
+            background: #4A90E2;
+            color: #fff;
+            border: none;
+            border-radius: 25px;
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .control-button:hover {
+            background: #357ABD;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+        }
+
+        .control-button:active {
+            transform: scale(0.95);
+        }
+
+        .control-button:disabled {
+            background: #aaa;
+            cursor: not-allowed;
+        }
+
+        /* フレーム表示 */
+        #frameInfo {
+            font-weight: bold;
+            font-size: 16px;
+            color: #333;
+            margin-left: 10px;
+        }
     </style>
 </head>
 
 <body>
-    <h1>マップ表示</h1>
+    <h1>南草津マップ + Player UI</h1>
+
     <div id="canvasContainer">
-        <!-- ここで ID を mapCanvas, highlightCanvas にする -->
         <canvas id="mapCanvas" width="800" height="600"></canvas>
         <canvas id="highlightCanvas" width="800" height="600"></canvas>
     </div>
-
-    <!-- ポップアップ -->
     <div id="popup">
         <div id="popup-content"></div>
     </div>
 
-    <!-- Socket.IOを先に読んでいるならここに書く -->
-    <script src="/socket.io/socket.io.js"></script>
+    <!-- コントロールパネル (リッチUI) -->
+    <div id="controlPanel">
+        <button class="control-button" id="rewindBtn">巻き戻し</button>
+        <button class="control-button" id="pauseBtn">一時停止</button>
+        <button class="control-button" id="playBtn">再生</button>
+        <span id="frameInfo">Frame: --</span>
+    </div>
 
-    <!-- map.js は最後に読み込む -->
+    <!-- Socket.IO (必要なら) -->
+    <script src="/socket.io/socket.io.js"></script>
+    <!-- JS本体 -->
     <script src="{{ url_for('static', filename='map.js') }}"></script>
 </body>
 
