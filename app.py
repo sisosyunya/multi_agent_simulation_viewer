@@ -1,6 +1,6 @@
 import os
 import json
-from flask import Flask, render_template, jsonify
+from flask import Flask, render_template, jsonify, request
 from flask_socketio import SocketIO
 
 app = Flask(__name__)
@@ -25,6 +25,29 @@ def roads():
     with open(file_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
     return jsonify(data)
+
+
+@app.route('/data_from_gama', methods=['POST'])
+def data_from_gama():
+    data = request.get_json()
+    if not data:
+        return jsonify({"status": "No data received"}), 400
+
+    # エージェントデータを 'agents' キーでラップしてブロードキャスト
+    socketio.emit('new_data', {'agents': data})
+
+    # エージェントデータのみをプリント
+    print("Received agent data from GAMA:")
+    if isinstance(data, list):
+        for agent in data:
+            print(agent)
+    elif isinstance(data, dict) and 'agents' in data:
+        for agent in data['agents']:
+            print(agent)
+    else:
+        print("Unexpected data format.")
+
+    return jsonify({"status": "Data received"}), 200
 
 @app.route('/buildings')
 def buildings():
