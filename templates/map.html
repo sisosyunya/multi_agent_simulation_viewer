@@ -5,12 +5,15 @@
     <meta charset="UTF-8">
     <title>南草津マップ + Player UI</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- Socket.IOクライアントを先に読み込む -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <style>
         /* キャンバス関係 */
         #canvasContainer {
             position: relative;
             width: 800px;
-            margin: 0 auto;   /* ←これで中央寄せ */
+            margin: 0 auto;
+            /* ←これで中央寄せ */
             height: 600px;
             border: 1px solid #ccc;
             margin-bottom: 20px;
@@ -97,6 +100,7 @@
 </head>
 
 <body>
+    <script src="/socket.io/socket.io.js"></script>
     <h1>南草津マップ + Player UI</h1>
 
     <div id="canvasContainer">
@@ -114,11 +118,11 @@
         <button class="control-button" id="playBtn">再生</button>
         <span id="frameInfo">Frame: --</span>
     </div>
-
-    <!-- Socket.IO (必要なら) -->
+    <!-- Socket.IO クライアントライブラリの読み込み -->
     <script src="/socket.io/socket.io.js"></script>
     <!-- JS本体 -->
     <script src="{{ url_for('static', filename='map.js') }}"></script>
+
 </body>
 
 </html>

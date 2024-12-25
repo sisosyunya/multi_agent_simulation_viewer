@@ -1,7 +1,8 @@
+// static/map.js
+
 console.log("[map.js] start loading...");
 
 // ---------- Canvas取得 ----------
-// キャンバス
 const mapCanvas = document.getElementById('mapCanvas');
 const ctx = mapCanvas.getContext('2d');
 const highlightCanvas = document.getElementById('highlightCanvas');
@@ -10,43 +11,100 @@ const highlightCtx = highlightCanvas.getContext('2d');
 const canvasHeight = mapCanvas.height;
 const canvasWidth = mapCanvas.width;
 
-// スケーリング例
+// スケーリング用の設定
 const scale = 0.45;
 const offsetX = -13550000;
 const offsetY = -3480000;
 const xmove = 19735;
 const ymove = 8780;
 
-// フレーム管理 (クライアント側でも現在のframeIndexを保持)
+// フレーム管理
 let currentFrame = 0;
-let isPlaying = false; // 再生中かどうか
-let playTimer = null;  // setInterval用
+
+// フレーム表示
+const frameInfo = document.getElementById('frameInfo');
+
+// ボタン
+const rewindBtn = document.getElementById('rewindBtn');
+const pauseBtn  = document.getElementById('pauseBtn');
+const playBtn   = document.getElementById('playBtn');
+
+// ボタンのイベント
+rewindBtn.addEventListener('click', () => {
+  console.log("[map.js] Rewind clicked");
+  fetch('/rewind', {method:'POST'})
+    .then(r => r.json())
+    .then(data => {
+      console.log("[map.js] rewound:", data);
+      currentFrame = data.current_frame || 0;
+      updateFrameDisplay();
+    })
+    .catch(err => console.error("[map.js] Rewind Error:", err));
+});
+
+pauseBtn.addEventListener('click', () => {
+  console.log("[map.js] Pause clicked");
+  fetch('/pause', {method:'POST'})
+    .then(r => r.json())
+    .then(data => {
+      console.log("[map.js] paused:", data);
+      // Optional: update UI to reflect pause state
+    })
+    .catch(err => console.error("[map.js] Pause Error:", err));
+});
+
+playBtn.addEventListener('click', () => {
+  console.log("[map.js] Play clicked");
+  fetch('/play', {method:'POST'})
+    .then(r => r.json())
+    .then(data => {
+      console.log("[map.js] resumed:", data);
+      // Optional: update UI to reflect play state
+    })
+    .catch(err => console.error("[map.js] Play Error:", err));
+});
+
+function updateFrameDisplay() {
+  frameInfo.innerText = `Frame: ${currentFrame}`;
+}
 
 // ---- roads, buildings などの描画 (初期マップ) ----
 fetch('/roads')
-  .then(r => r.json())
+  .then(response => {
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    return response.json();
+  })
   .then(roadData => {
     console.log("[map.js] /roads fetched:", roadData.length, "features");
     roadData.forEach(feature => drawGeometry(feature.geometry, ctx));
-  });
+  })
+  .catch(err => console.error("[map.js] Error fetching /roads:", err));
 
 fetch('/buildings')
-  .then(r => r.json())
+  .then(response => {
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    return response.json();
+  })
   .then(buildingData => {
     console.log("[map.js] /buildings fetched:", buildingData.length, "features");
     buildingData.forEach(feature => drawGeometry(feature.geometry, ctx));
-  });
+  })
+  .catch(err => console.error("[map.js] Error fetching /buildings:", err));
 
-// テスト用: geometry描画関数
+// geometry描画関数
 function drawGeometry(geometry, context) {
   if (!geometry) return;
   if (geometry.type === "Polygon") {
     geometry.coordinates.forEach(ring => {
       context.beginPath();
       ring.forEach(([x, y], idx) => {
-        const px = (x+offsetX)*scale - xmove;
-        const py = canvasHeight - ((y+offsetY)*scale - ymove);
-        if (idx===0) context.moveTo(px, py);
+        const px = (x + offsetX) * scale - xmove;
+        const py = canvasHeight - ((y + offsetY) * scale - ymove);
+        if (idx === 0) context.moveTo(px, py);
         else context.lineTo(px, py);
       });
       context.closePath();
@@ -57,148 +115,109 @@ function drawGeometry(geometry, context) {
     context.strokeStyle = "black";
     context.lineWidth = 1;
     context.beginPath();
-    geometry.coordinates.forEach(([x,y], idx) => {
-      const px = (x+offsetX)*scale - xmove;
-      const py = canvasHeight - ((y+offsetY)*scale - ymove);
-      if (idx===0) context.moveTo(px,py);
-      else context.lineTo(px,py);
+    geometry.coordinates.forEach(([x, y], idx) => {
+      const px = (x + offsetX) * scale - xmove;
+      const py = canvasHeight - ((y + offsetY) * scale - ymove);
+      if (idx === 0) context.moveTo(px, py);
+      else context.lineTo(px, py);
     });
     context.stroke();
   }
 }
 
-console.log("[map.js] start loading...");
+console.log("[map.js] Loading complete.");
 
+// Socket.IO クライアントの初期化
+const socket = io();
 
-const frameInfo = document.getElementById('frameInfo');
-
-// ボタン
-const rewindBtn = document.getElementById('rewindBtn');
-const pauseBtn  = document.getElementById('pauseBtn');
-const playBtn   = document.getElementById('playBtn');
-
-// ボタンのイベント (例)
-rewindBtn.addEventListener('click', () => {
-  console.log("[map.js] Rewind clicked");
-  // fetch('/rewind') ... or client-side logic
-});
-pauseBtn.addEventListener('click', () => {
-  console.log("[map.js] Pause clicked");
-});
-playBtn.addEventListener('click', () => {
-  console.log("[map.js] Play clicked");
+socket.on('connect', () => {
+    console.log("[map.js] Connected to Socket.IO server.");
+    updateFrameDisplay();
 });
 
-// roads, buildings の読み込みなど...
-// 省略
-
-console.log("[map.js] end loading");
-// 巻き戻し
-rewindBtn.addEventListener('click', () => {
-  fetch('/rewind', {method:'POST'})
-    .then(r => r.json())
-    .then(data => {
-      console.log("[map.js] rewound:", data);
-      currentFrame = data.frame;
-      updateFrameDisplay();
-      // フレームを取得して描画
-      getFrameAndDraw(currentFrame);
-    })
-    .catch(err => console.error(err));
+socket.on('connect_error', (err) => {
+    console.error("[map.js] Socket.IO connection error:", err);
 });
 
-// 一時停止
-pauseBtn.addEventListener('click', () => {
-  fetch('/pause', {method:'POST'})
-    .then(r => r.json())
-    .then(data => {
-      console.log("[map.js] paused:", data);
-      isPlaying = false;
-      stopPlaying();
-    })
-    .catch(err => console.error(err));
+socket.on('new_data', (data) => {
+    console.log('Received new_data from server:', data);
+    if (data.agents) {
+        updateAgents(data.agents);
+    } else {
+        console.error('Received data does not contain "agents" key.');
+    }
 });
 
-// 再生 (自動インクリメント)
-playBtn.addEventListener('click', () => {
-  fetch('/resume', {method:'POST'})
-    .then(r => r.json())
-    .then(data => {
-      console.log("[map.js] resumed:", data);
-      isPlaying = true;
-      startPlaying();
-    })
-    .catch(err => console.error(err));
-});
+// エージェントを描画する関数
+function updateAgents(agents) {
+    console.log('updateAgents called with:', agents);
+    // エージェント描画用のレイヤーをクリア
+    highlightCtx.clearRect(0, 0, highlightCanvas.width, highlightCanvas.height);
 
-function updateFrameDisplay() {
-  frameInfo.innerText = `Frame: ${currentFrame}`;
+    agents.forEach(agent => {
+        const scaledX = (agent.x + offsetX) * scale - xmove;
+        const scaledY = canvasHeight - ((agent.y + offsetY) * scale - ymove);
+        console.log(`Agent ID: ${agent.id}, ScaledX: ${scaledX}, ScaledY: ${scaledY}`);
+
+        // エージェントを描画（青い円）
+        highlightCtx.beginPath();
+        highlightCtx.arc(scaledX, scaledY, 5, 0, 2 * Math.PI);
+        highlightCtx.fillStyle = 'blue';
+        highlightCtx.fill();
+        highlightCtx.strokeStyle = 'black';
+        highlightCtx.stroke();
+
+        // エージェントIDを表示（オプション）
+        highlightCtx.font = '12px Arial';
+        highlightCtx.fillStyle = 'black';
+        highlightCtx.fillText(agent.id, scaledX + 5, scaledY - 5);
+    });
+
+    // フレームインデックスの更新（サーバー側で管理）
+    // currentFrame はサーバー側で管理されているため、クライアント側では必要に応じて同期
+    // ここでは単純に増加させる
+    // currentFrame++;
+    // updateFrameDisplay();
 }
 
-// フレームを取得して描画 (サーバーの /get_frame?frameIndex=... などでもOK)
-// ここでは例として /get_frame を使う
-function getFrameAndDraw(frameIndex) {
-  fetch('/get_frame')
-    .then(r => r.json())
-    .then(resp => {
-      if (resp.status === 'success') {
-        currentFrame = resp.frameIndex;
-        updateFrameDisplay();
-        // フレームデータを描画 (エージェントなど)
-        drawAgents(resp.frameData);
-      } else {
-        console.log("[map.js] get_frame empty or error");
-      }
-    })
-    .catch(err => console.error(err));
-}
-
-// エージェント描画の例
-function drawAgents(frameData) {
-  highlightCtx.clearRect(0, 0, highlightCanvas.width, highlightCanvas.height);
-  if (!frameData) return;
-
-  // 例: frameData = { agents:[...], gama_references:{...} }
-  const agents = frameData.agents || [];
-  const refs   = frameData.gama_references || {};
-
-  highlightCtx.fillStyle = "red";
-  agents.forEach(agent => {
-    const ref = agent.agent_reference;
-    const info = refs[ref];
-    if (!info) return;
-    const loc = info.attributes?.loc;
-    if (!loc) return;
-
-    const px = (loc.x + offsetX)*scale - xmove;
-    const py = highlightCanvas.height - ((loc.y + offsetY)*scale - ymove);
-    highlightCtx.beginPath();
-    highlightCtx.arc(px, py, 5, 0, 2*Math.PI);
-    highlightCtx.fill();
-  });
-}
-
-// 自動再生 (setInterval)
+// 再生開始・停止はサーバー側で管理するため、クライアント側では必要に応じてUIを更新
 function startPlaying() {
-  stopPlaying(); // 二重開始を防ぐ
-  playTimer = setInterval(() => {
-    // 次のフレームを描画
-    currentFrame++;
-    getFrameAndDraw(currentFrame);
-  }, 1000); // 1秒に1フレーム進む例
+    console.log("[map.js] Playback started");
+    // 例: ボタンの状態を変更
 }
 
 function stopPlaying() {
-  if (playTimer) {
-    clearInterval(playTimer);
-    playTimer = null;
-  }
+    console.log("[map.js] Playback stopped");
+    // 例: ボタンの状態を変更
 }
 
-function init() {
-  updateFrameDisplay();
-  // もし最初のフレームを描画したければ getFrameAndDraw(0) など
+console.log("[map.js] end loading");
+
+// ポイントとラインセグメント間の距離を計算する関数
+function pointToLineDistance(px, py, x1, y1, x2, y2) {
+    const A = px - x1;
+    const B = py - y1;
+    const C = x2 - x1;
+    const D = y2 - y1;
+    const dot = A * C + B * D;
+    const len_sq = C * C + D * D;
+    const param = (len_sq !== 0) ? (dot / len_sq) : -1;
+    let xx, yy;
+
+    if (param < 0) {
+        xx = x1;
+        yy = y1;
+    } else if (param > 1) {
+        xx = x2;
+        yy = y2;
+    } else {
+        xx = x1 + param * C;
+        yy = y1 + param * D;
+    }
+
+    const dx = px - xx;
+    const dy = py - yy;
+    return Math.sqrt(dx * dx + dy * dy);
 }
-init();
 
 console.log("[map.js] end loading");
