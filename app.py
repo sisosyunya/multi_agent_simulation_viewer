@@ -33,19 +33,18 @@ def data_from_gama():
     if not data:
         return jsonify({"status": "No data received"}), 400
 
-    # エージェントデータを 'agents' キーでラップしてブロードキャスト
-    socketio.emit('new_data', {'agents': data})
+    # データを配列に変換
+    agents_data = []
+    for agent in data:
+        agents_data.append({
+            'id': agent.get('id'),
+            'x': agent.get('x'),
+            'y': agent.get('y')
+        })
 
-    # エージェントデータのみをプリント
-    print("Received agent data from GAMA:")
-    if isinstance(data, list):
-        for agent in data:
-            print(agent)
-    elif isinstance(data, dict) and 'agents' in data:
-        for agent in data['agents']:
-            print(agent)
-    else:
-        print("Unexpected data format.")
+    # エージェントデータをブロードキャスト
+    socketio.emit('new_data', {'agents': agents_data})
+    print(f"Broadcasting {len(agents_data)} agents")
 
     return jsonify({"status": "Data received"}), 200
 
