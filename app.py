@@ -7,6 +7,9 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = 'secret!'
 socketio = SocketIO(app)
 
+# グローバル変数として履歴を保存
+agent_history = []
+
 @app.route('/')
 def index():
     return "Go to /map"
@@ -25,7 +28,6 @@ def roads():
     with open(file_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
     return jsonify(data)
-
 
 @app.route('/data_from_gama', methods=['POST'])
 def data_from_gama():
@@ -57,6 +59,15 @@ def buildings():
     with open(file_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
     return jsonify(data)
+
+@socketio.on('request_frame')
+def handle_frame_request(frame_number):
+    if 0 <= frame_number < len(agent_history):
+        socketio.emit('new_data', {
+            'agents': agent_history[frame_number],
+            'frame': frame_number,
+            'total_frames': len(agent_history)
+        })
 
 if __name__ == '__main__':
     # socketio.run で起動し、/socket.io/socket.io.js も正しく配信される

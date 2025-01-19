@@ -139,54 +139,96 @@ socket.on('connect_error', (err) => {
     console.error("[map.js] Socket.IO connection error:", err);
 });
 
-socket.on('new_data', (data) => {
-    console.log('Received new_data from server:', data);
-    if (data.agents) {
-        updateAgents(data.agents);
-    } else {
-        console.error('Received data does not contain "agents" key.');
+// グローバル変数を更新
+let isPlaying = false;
+let totalFrames = 100;
+let availableFrames = 0;
+const frameSlider = document.getElementById('frameSlider');
+const currentFrameLabel = document.getElementById('currentFrameLabel');
+const maxFrameLabel = document.getElementById('maxFrameLabel');
+const playPauseBtn = document.getElementById('playPauseBtn');
+const playPauseIcon = document.getElementById('playPauseIcon');
+
+// 再生/一時停止の切り替え
+playPauseBtn.addEventListener('click', () => {
+    isPlaying = !isPlaying;
+    playPauseIcon.textContent = isPlaying ? '⏸' : '▶';
+
+    if (isPlaying) {
+        playNextFrame();
     }
 });
 
-// エージェントを描画する関数
-function updateAgents(agents) {
-    console.log('updateAgents called with:', agents);
-    highlightCtx.clearRect(0, 0, highlightCanvas.width, highlightCanvas.height);
+// フレームの再生
+function playNextFrame() {
+    if (!isPlaying) return;
 
-    agents.forEach(agent => {
-        // スケーリングを調整
-        const scaledX = (agent.x / 10) + (canvasWidth / 2);  // スケールを1/10に
-        const scaledY = canvasHeight - ((agent.y / 10) + (canvasHeight / 2));  // Y座標を反転
-
-        // エージェントを描画（青い円）
-        highlightCtx.beginPath();
-        highlightCtx.arc(scaledX, scaledY, 3, 0, 2 * Math.PI);  // サイズを小さく
-        highlightCtx.fillStyle = 'red';  // 色を変更
-        highlightCtx.fill();
-        highlightCtx.strokeStyle = 'black';
-        highlightCtx.stroke();
-
-        // エージェントIDを表示
-        highlightCtx.font = '10px Arial';  // フォントサイズを小さく
-        highlightCtx.fillStyle = 'black';
-        highlightCtx.fillText(`${agent.id}`, scaledX + 5, scaledY - 5);
-    });
-
-    // フレーム情報を更新
-    currentFrame++;
-    updateFrameDisplay();
+    const nextFrame = currentFrame + 1;
+    if (nextFrame < availableFrames) {
+        socket.emit('request_frame', nextFrame);
+        setTimeout(playNextFrame, 500); // 0.5秒間隔で再生
+    } else {
+        // 最後まで再生したら停止
+        isPlaying = false;
+        playPauseIcon.textContent = '▶';
+    }
 }
 
-// 再生開始・停止はサーバー側で管理するため、クライアント側では必要に応じてUIを更新
-function startPlaying() {
-    console.log("[map.js] Playback started");
-    // 例: ボタンの状態を変更
+// スライダーのイベントリスナー
+frameSlider.addEventListener('input', (e) => {
+    const requestedFrame = parseInt(e.target.value);
+    if (requestedFrame <= availableFrames) {
+        // 再生中なら一時停止
+        isPlaying = false;
+        playPauseIcon.textContent = '▶';
+
+        // フレームを要求
+        socket.emit('request_frame', requestedFrame);
+    }
+});
+
+// Socket.IOイベントハンドラを更新
+socket.on('new_data', (data) => {
+    if (data && data.agents && Array.isArray(data.agents)) {
+        // 初めてデータを受信したらUIを有効化
+        if (availableFrames === 0) {
+            frameSlider.disabled = false;
+            playPauseBtn.disabled = false;
+        }
+
+        availableFrames++;
+        currentFrame = data.frame || currentFrame;
+        frameSlider.value = currentFrame;
+
+        updateAgents(data.agents);
+        updateProgressBar();
+    }
+});
+
+// プログレスバーの更新
+function updateProgressBar() {
+    const progressAvailable = document.querySelector('.progress-available');
+    const progressFuture = document.querySelector('.progress-future');
+
+    const availableWidth = (availableFrames / totalFrames) * 100;
+    const futureWidth = ((totalFrames - availableFrames) / totalFrames) * 100;
+
+    progressAvailable.style.width = `${availableWidth}%`;
+    progressFuture.style.width = `${futureWidth}%`;
+
+    currentFrameLabel.textContent = currentFrame;
+    maxFrameLabel.textContent = availableFrames;
 }
 
-function stopPlaying() {
-    console.log("[map.js] Playback stopped");
-    // 例: ボタンの状態を変更
+// スライダーの初期設定
+function initializeSlider() {
+    frameSlider.max = totalFrames;
+    frameSlider.value = 0;
+    updateProgressBar();
 }
+
+// 初期化
+initializeSlider();
 
 console.log("[map.js] end loading");
 

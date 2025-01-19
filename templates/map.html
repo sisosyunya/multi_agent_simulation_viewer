@@ -96,6 +96,55 @@
             color: #333;
             margin-left: 10px;
         }
+
+        .progress-container {
+            width: 100%;
+            margin-top: 10px;
+            padding: 0 20px;
+        }
+
+        .progress-bar {
+            position: relative;
+            width: 100%;
+            height: 20px;
+            background: #ddd;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+
+        .progress-available {
+            position: absolute;
+            height: 100%;
+            background: #4A90E2;
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        .progress-future {
+            position: absolute;
+            height: 100%;
+            background: #999;
+            right: 0;
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        #frameSlider {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            opacity: 0.7;
+            cursor: pointer;
+        }
+
+        .progress-labels {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 5px;
+            font-size: 12px;
+            color: #666;
+        }
     </style>
 </head>
 
@@ -111,12 +160,28 @@
         <div id="popup-content"></div>
     </div>
 
-    <!-- コントロールパネル (リッチUI) -->
+    <!-- コントロールパネルを修正 -->
     <div id="controlPanel">
-        <button class="control-button" id="rewindBtn">巻き戻し</button>
-        <button class="control-button" id="pauseBtn">一時停止</button>
-        <button class="control-button" id="playBtn">再生</button>
+        <!-- 再生/一時停止ボタンを1つに統合 -->
+        <button class="control-button" id="playPauseBtn" disabled>
+            <span id="playPauseIcon">▶</span>
+        </button>
         <span id="frameInfo">Frame: --</span>
+
+        <!-- プログレスバー用のコンテナ -->
+        <div class="progress-container">
+            <div class="progress-bar">
+                <div class="progress-available"></div>
+                <div class="progress-future"></div>
+                <input type="range" id="frameSlider" value="0" min="0" max="100" step="1" aria-label="フレームスライダー"
+                    disabled>
+            </div>
+            <div class="progress-labels">
+                <span class="progress-start">0</span>
+                <span class="progress-current" id="currentFrameLabel">--</span>
+                <span class="progress-end" id="maxFrameLabel">--</span>
+            </div>
+        </div>
     </div>
     <!-- Socket.IO クライアントライブラリの読み込み -->
     <script src="/socket.io/socket.io.js"></script>
