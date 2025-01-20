@@ -11,7 +11,7 @@ const highlightCtx = highlightCanvas.getContext('2d');
 const canvasHeight = mapCanvas.height;
 const canvasWidth = mapCanvas.width;
 
-// スケーリング用の設定
+// マップ描画用の定数を調整
 const scale = 0.45;
 const offsetX = -13550000;
 const offsetY = -3480000;
@@ -24,45 +24,15 @@ let currentFrame = 0;
 // フレーム表示
 const frameInfo = document.getElementById('frameInfo');
 
-// ボタン
-const rewindBtn = document.getElementById('rewindBtn');
-const pauseBtn = document.getElementById('pauseBtn');
-const playBtn = document.getElementById('playBtn');
+// ボタンの参照を更新（rewindBtn, pauseBtn, playBtnは削除）
+const playPauseBtn = document.getElementById('playPauseBtn');
+const playPauseIcon = document.getElementById('playPauseIcon');
+const frameSlider = document.getElementById('frameSlider');
+const currentFrameLabel = document.getElementById('currentFrameLabel');
+const maxFrameLabel = document.getElementById('maxFrameLabel');
 
 // ボタンのイベント
-rewindBtn.addEventListener('click', () => {
-    console.log("[map.js] Rewind clicked");
-    fetch('/rewind', { method: 'POST' })
-        .then(r => r.json())
-        .then(data => {
-            console.log("[map.js] rewound:", data);
-            currentFrame = data.current_frame || 0;
-            updateFrameDisplay();
-        })
-        .catch(err => console.error("[map.js] Rewind Error:", err));
-});
-
-pauseBtn.addEventListener('click', () => {
-    console.log("[map.js] Pause clicked");
-    fetch('/pause', { method: 'POST' })
-        .then(r => r.json())
-        .then(data => {
-            console.log("[map.js] paused:", data);
-            // Optional: update UI to reflect pause state
-        })
-        .catch(err => console.error("[map.js] Pause Error:", err));
-});
-
-playBtn.addEventListener('click', () => {
-    console.log("[map.js] Play clicked");
-    fetch('/play', { method: 'POST' })
-        .then(r => r.json())
-        .then(data => {
-            console.log("[map.js] resumed:", data);
-            // Optional: update UI to reflect play state
-        })
-        .catch(err => console.error("[map.js] Play Error:", err));
-});
+// rewindBtn, pauseBtn, playBtnのイベントリスナーを削除
 
 function updateFrameDisplay() {
     frameInfo.innerText = `Frame: ${currentFrame}`;
@@ -70,34 +40,28 @@ function updateFrameDisplay() {
 
 // ---- roads, buildings などの描画 (初期マップ) ----
 fetch('/roads')
-    .then(response => {
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        return response.json();
-    })
+    .then(response => response.json())
     .then(roadData => {
-        console.log("[map.js] /roads fetched:", roadData.length, "features");
+        console.log("[map.js] Roads loaded:", roadData.length, "features");
+        ctx.clearRect(0, 0, canvasWidth, canvasHeight);  // キャンバスをクリア
         roadData.forEach(feature => drawGeometry(feature.geometry, ctx));
     })
-    .catch(err => console.error("[map.js] Error fetching /roads:", err));
+    .catch(err => console.error("[map.js] Error loading roads:", err));
 
 fetch('/buildings')
-    .then(response => {
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        return response.json();
-    })
+    .then(response => response.json())
     .then(buildingData => {
-        console.log("[map.js] /buildings fetched:", buildingData.length, "features");
+        console.log("[map.js] Buildings loaded:", buildingData.length, "features");
         buildingData.forEach(feature => drawGeometry(feature.geometry, ctx));
     })
-    .catch(err => console.error("[map.js] Error fetching /buildings:", err));
+    .catch(err => console.error("[map.js] Error loading buildings:", err));
 
-// geometry描画関数
+// geometry描画関数を修正
 function drawGeometry(geometry, context) {
     if (!geometry) return;
+
+    context.save();  // 現在の描画状態を保存
+
     if (geometry.type === "Polygon") {
         geometry.coordinates.forEach(ring => {
             context.beginPath();
@@ -108,13 +72,15 @@ function drawGeometry(geometry, context) {
                 else context.lineTo(px, py);
             });
             context.closePath();
-            context.fillStyle = "rgba(0,0,255,0.3)";
+            context.fillStyle = "rgba(200,200,200,0.3)";  // より薄い色に変更
             context.fill();
+            context.strokeStyle = "rgba(100,100,100,0.8)";
+            context.stroke();
         });
     } else if (geometry.type === "LineString") {
-        context.strokeStyle = "black";
-        context.lineWidth = 1;
         context.beginPath();
+        context.strokeStyle = "rgba(100,100,100,0.8)";
+        context.lineWidth = 1;
         geometry.coordinates.forEach(([x, y], idx) => {
             const px = (x + offsetX) * scale - xmove;
             const py = canvasHeight - ((y + offsetY) * scale - ymove);
@@ -123,41 +89,81 @@ function drawGeometry(geometry, context) {
         });
         context.stroke();
     }
+
+    context.restore();  // 描画状態を元に戻す
 }
 
 console.log("[map.js] Loading complete.");
 
-// Socket.IO クライアントの初期化
-const socket = io();
+// Socket.IO接続のエラーハンドリングを強化
+const socket = io({
+    transports: ['websocket'],
+    reconnection: true,
+    reconnectionAttempts: 5
+});
 
+// デモモード用の変数
+let demoMode = true;
+let demoInterval = null;
+
+// デモモードの開始（エラーハンドリングを追加）
+function startDemoMode() {
+    if (!demoMode) return;
+
+    console.log('Starting demo mode...');
+    demoInterval = setInterval(() => {
+        fetch('/update_demo', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                return response.json();
+            })
+            .then(data => {
+                console.log('Demo update successful:', data);
+            })
+            .catch(error => {
+                console.error('Demo update error:', error);
+            });
+    }, 3000);
+}
+
+// 接続時にデモモードを開始
 socket.on('connect', () => {
     console.log("[map.js] Connected to Socket.IO server.");
     updateFrameDisplay();
+    if (demoMode) {
+        startDemoMode();
+    }
 });
 
-socket.on('connect_error', (err) => {
-    console.error("[map.js] Socket.IO connection error:", err);
+socket.on('connect_error', (error) => {
+    console.error('Socket.IO connection error:', error);
 });
 
 // グローバル変数を更新
 let isPlaying = false;
 let totalFrames = 100;
 let availableFrames = 0;
-const frameSlider = document.getElementById('frameSlider');
-const currentFrameLabel = document.getElementById('currentFrameLabel');
-const maxFrameLabel = document.getElementById('maxFrameLabel');
-const playPauseBtn = document.getElementById('playPauseBtn');
-const playPauseIcon = document.getElementById('playPauseIcon');
 
-// 再生/一時停止の切り替え
-playPauseBtn.addEventListener('click', () => {
-    isPlaying = !isPlaying;
-    playPauseIcon.textContent = isPlaying ? '⏸' : '▶';
+// 再生/一時停止ボタンのイベントリスナー（null チェックを追加）
+if (playPauseBtn) {
+    playPauseBtn.addEventListener('click', () => {
+        isPlaying = !isPlaying;
+        if (playPauseIcon) {
+            playPauseIcon.textContent = isPlaying ? '⏸' : '▶';
+        }
 
-    if (isPlaying) {
-        playNextFrame();
-    }
-});
+        if (isPlaying) {
+            playNextFrame();
+        }
+    });
+}
 
 // フレームの再生
 function playNextFrame() {
@@ -170,22 +176,25 @@ function playNextFrame() {
     } else {
         // 最後まで再生したら停止
         isPlaying = false;
-        playPauseIcon.textContent = '▶';
+        if (playPauseIcon) {
+            playPauseIcon.textContent = '▶';
+        }
     }
 }
 
-// スライダーのイベントリスナー
-frameSlider.addEventListener('input', (e) => {
-    const requestedFrame = parseInt(e.target.value);
-    if (requestedFrame <= availableFrames) {
-        // 再生中なら一時停止
-        isPlaying = false;
-        playPauseIcon.textContent = '▶';
-
-        // フレームを要求
-        socket.emit('request_frame', requestedFrame);
-    }
-});
+// フレームスライダーのイベントリスナー（null チェックを追加）
+if (frameSlider) {
+    frameSlider.addEventListener('input', (e) => {
+        const requestedFrame = parseInt(e.target.value);
+        if (requestedFrame <= availableFrames) {
+            isPlaying = false;
+            if (playPauseIcon) {
+                playPauseIcon.textContent = '▶';
+            }
+            socket.emit('request_frame', requestedFrame);
+        }
+    });
+}
 
 // Socket.IOイベントハンドラを更新
 socket.on('new_data', (data) => {
@@ -260,3 +269,28 @@ function pointToLineDistance(px, py, x1, y1, x2, y2) {
 }
 
 console.log("[map.js] end loading");
+
+// エージェントを描画する関数
+function updateAgents(agents) {
+    // キャンバスをクリア
+    highlightCtx.clearRect(0, 0, highlightCanvas.width, highlightCanvas.height);
+
+    agents.forEach(agent => {
+        // マップと同じスケーリングを使用
+        const px = (agent.x + offsetX) * scale - xmove;
+        const py = canvasHeight - ((agent.y + offsetY) * scale - ymove);
+
+        // エージェントを描画
+        highlightCtx.beginPath();
+        highlightCtx.arc(px, py, 4, 0, 2 * Math.PI);
+        highlightCtx.fillStyle = 'red';
+        highlightCtx.fill();
+        highlightCtx.strokeStyle = 'black';
+        highlightCtx.stroke();
+
+        // エージェントIDを表示
+        highlightCtx.font = '10px Arial';
+        highlightCtx.fillStyle = 'black';
+        highlightCtx.fillText(`${agent.id}`, px + 6, py - 6);
+    });
+}

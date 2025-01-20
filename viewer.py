@@ -16,7 +16,15 @@ def main():
 
     @sio.on('new_data')
     def on_new_data(data):
-        print("[Viewer.py] Received new_data:", data)
+        print("\n=== New Frame ===")
+        if data and 'agents' in data:
+            print(f"Frame: {data.get('frame', '?')}/{data.get('total_frames', '?')}")
+            print(f"Total agents: {len(data['agents'])}")
+            # 最初の3エージェントの位置を表示
+            for agent in data['agents'][:3]:
+                print(f"Agent {agent['id']}: x={agent['x']:.2f}, y={agent['y']:.2f}")
+        else:
+            print("No agent data received")
     try:
         sio.connect("http://localhost:8000", transports=['websocket'])
     except Exception as e:
