@@ -4,38 +4,132 @@ from flask import Flask, render_template, jsonify, request
 from flask_socketio import SocketIO
 import random
 import math
+import numpy as np
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'secret!'
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
-# グローバル変数として履歴を保存
+# グローバル変数
 agent_history = []
+road_data = None
+
+# 道路データの読み込み
+def load_road_data():
+    global road_data
+    file_path = os.path.join(os.path.dirname(__file__), 'map', 'roads.json')
+    if os.path.exists(file_path):
+        with open(file_path, 'r', encoding='utf-8') as f:
+            road_data = json.load(f)
+    else:
+        road_data = []
+
+# 道路上のランダムな位置を取得
+def get_random_road_position():
+    if not road_data:
+        return (13550000, 3480000)  # デフォルト位置
+
+    # ランダムな道路を選択
+    road = random.choice(road_data)
+    if not road.get('geometry') or not road['geometry'].get('coordinates'):
+        return (13550000, 3480000)
+
+    coords = road['geometry']['coordinates']
+    if len(coords) < 2:
+        return (13550000, 3480000)
+
+    # 道路上のランダムな位置を選択
+    idx = random.randint(0, len(coords) - 2)
+    p1 = coords[idx]
+    p2 = coords[idx + 1]
+    t = random.random()  # 0から1の間のランダムな値
+
+    # 2点間の線形補間
+    x = p1[0] + (p2[0] - p1[0]) * t
+    y = p1[1] + (p2[1] - p1[1]) * t
+
+    return (x, y)
+
+# 道路に沿った次の位置を取得
+def get_next_road_position(current_x, current_y, speed=10):
+    if not road_data:
+        return (current_x + random.uniform(-speed, speed),
+                current_y + random.uniform(-speed, speed))
+
+    # 最も近い道路セグメントを見つける
+    min_dist = float('inf')
+    next_pos = None
+    direction = None
+
+    for road in road_data:
+        if not road.get('geometry') or not road['geometry'].get('coordinates'):
+            continue
+
+        coords = road['geometry']['coordinates']
+        for i in range(len(coords) - 1):
+            p1 = coords[i]
+            p2 = coords[i + 1]
+
+            # 現在位置から道路セグメントまでの距離を計算
+            dx = p2[0] - p1[0]
+            dy = p2[1] - p1[1]
+            segment_length = math.sqrt(dx * dx + dy * dy)
+            
+            if segment_length == 0:
+                continue
+
+            # 道路セグメントへの投影点を計算
+            t = ((current_x - p1[0]) * dx + (current_y - p1[1]) * dy) / (segment_length * segment_length)
+            t = max(0, min(1, t))
+
+            proj_x = p1[0] + t * dx
+            proj_y = p1[1] + t * dy
+            
+            dist = math.sqrt((current_x - proj_x)**2 + (current_y - proj_y)**2)
+
+            if dist < min_dist:
+                min_dist = dist
+                # 道路に沿って進む方向を計算
+                if t < 0.95:  # セグメントの終点に近づいていない場合
+                    direction = (dx / segment_length, dy / segment_length)
+                else:  # セグメントの終点に近い場合、次のセグメントがあれば使用
+                    if i < len(coords) - 2:
+                        next_dx = coords[i+2][0] - p2[0]
+                        next_dy = coords[i+2][1] - p2[1]
+                        next_length = math.sqrt(next_dx * next_dx + next_dy * next_dy)
+                        direction = (next_dx / next_length, next_dy / next_length)
+                    else:
+                        direction = (dx / segment_length, dy / segment_length)
+
+    if direction:
+        # 現在の位置から道路に沿って移動
+        next_x = current_x + direction[0] * speed
+        next_y = current_y + direction[1] * speed
+        return (next_x, next_y)
+    else:
+        # 道路が見つからない場合はランダムに移動
+        return (current_x + random.uniform(-speed, speed),
+                current_y + random.uniform(-speed, speed))
 
 # デモデータ生成用の関数
-def generate_demo_agents(num_agents=100):
+def generate_demo_agents(num_agents=10):
     agents = []
-    radius = 1000  # 円の半径
-    center_x = 2000  # 中心のX座標
-    center_y = 1500  # 中心のY座標
-    
     for i in range(num_agents):
-        # 円周上の位置をランダムに生成
-        angle = random.uniform(0, 2 * math.pi)
-        r = random.uniform(0, radius)
-        x = center_x + r * math.cos(angle)
-        y = center_y + r * math.sin(angle)
-        
+        x, y = get_random_road_position()
         agents.append({
             'id': i,
             'x': x,
             'y': y
         })
+    
+    print(f"Generated {num_agents} agents")
+    print(f"Sample agent position: {agents[0]}")
     return agents
 
-# 初期デモデータを生成
+# 初期化
+load_road_data()
 initial_demo_data = generate_demo_agents()
-agent_history = [initial_demo_data]  # 初期データを履歴に追加
+agent_history = [initial_demo_data]
 
 @app.route('/')
 def index():
@@ -56,10 +150,9 @@ def map_html():
 
 @app.route('/roads')
 def roads():
-    # たとえば map/roads.json を読み込んで返す
     file_path = os.path.join(os.path.dirname(__file__), 'map', 'roads.json')
     if not os.path.exists(file_path):
-        return jsonify([])  # ファイルが無い時の暫定措置
+        return jsonify([])
     with open(file_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
     return jsonify(data)
@@ -120,7 +213,6 @@ def data_from_gama():
 
 @app.route('/buildings')
 def buildings():
-    # たとえば map/buildings.json を読み込んで返す
     file_path = os.path.join(os.path.dirname(__file__), 'map', 'buildings.json')
     if not os.path.exists(file_path):
         return jsonify([])
@@ -137,31 +229,29 @@ def handle_frame_request(frame_number):
             'total_frames': len(agent_history)
         })
 
-# デモ用のデータ更新エンドポイントを追加
+# デモ用のデータ更新エンドポイント
 @app.route('/update_demo', methods=['POST'])
 def update_demo():
     global agent_history
     
-    # 前のフレームのエージェントを少し移動させた新しいフレームを生成
     last_frame = agent_history[-1]
     new_frame = []
     
     for agent in last_frame:
-        # ランダムな移動を追加
-        new_x = agent['x'] + random.uniform(-50, 50)
-        new_y = agent['y'] + random.uniform(-50, 50)
-        
+        # 道路に沿って移動
+        new_x, new_y = get_next_road_position(agent['x'], agent['y'])
         new_frame.append({
             'id': agent['id'],
             'x': new_x,
             'y': new_y
         })
     
-    # 新しいフレームを履歴に追加
     agent_history.append(new_frame)
     current_frame = len(agent_history) - 1
     
-    # 新しいフレームをブロードキャスト
+    print(f"Frame {current_frame}: Updated {len(new_frame)} agents")
+    print(f"Sample agent position: {new_frame[0]}")
+    
     socketio.emit('new_data', {
         'agents': new_frame,
         'frame': current_frame,
@@ -175,5 +265,4 @@ def update_demo():
     })
 
 if __name__ == '__main__':
-    # socketio.run で起動し、/socket.io/socket.io.js も正しく配信される
     socketio.run(app, host='0.0.0.0', port=8000, debug=True)

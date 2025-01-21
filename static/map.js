@@ -196,8 +196,84 @@ if (frameSlider) {
     });
 }
 
+// エージェントを描画する関数
+function updateAgents(agents) {
+    console.log('=== エージェント更新開始 ===');
+    console.log(`エージェント数: ${agents.length}`);
+
+    // キャンバスをクリア
+    highlightCtx.clearRect(0, 0, highlightCanvas.width, highlightCanvas.height);
+    highlightCtx.save();
+
+    let visibleCount = 0;
+    let invisibleCount = 0;
+
+    agents.forEach((agent, index) => {
+        // 座標変換（マップと同じスケーリングを使用）
+        const rawX = parseFloat(agent.x);
+        const rawY = parseFloat(agent.y);
+        const px = ((rawX + offsetX) * scale - xmove);
+        const py = canvasHeight - ((rawY + offsetY) * scale - ymove);
+
+        // 最初の3エージェントの座標をログ
+        if (index < 3) {
+            console.log(`エージェント ${agent.id}:`, {
+                raw: { x: rawX, y: rawY },
+                transformed: { x: px, y: py },
+                canvas: { width: canvasWidth, height: canvasHeight }
+            });
+        }
+
+        // 画面内のエージェントのみ描画
+        const margin = 50;
+        if (px >= -margin && px <= canvasWidth + margin &&
+            py >= -margin && py <= canvasHeight + margin) {
+            visibleCount++;
+
+            // エージェントを描画
+            highlightCtx.beginPath();
+            highlightCtx.arc(px, py, 6, 0, 2 * Math.PI);
+            highlightCtx.fillStyle = 'rgba(255, 0, 0, 0.8)';
+            highlightCtx.fill();
+            highlightCtx.strokeStyle = 'white';
+            highlightCtx.lineWidth = 2;
+            highlightCtx.stroke();
+
+            // エージェントIDを表示
+            highlightCtx.font = 'bold 12px Arial';
+            highlightCtx.fillStyle = 'white';
+            highlightCtx.strokeStyle = 'black';
+            highlightCtx.lineWidth = 2;
+            highlightCtx.textAlign = 'center';
+            highlightCtx.strokeText(`${agent.id}`, px, py - 8);
+            highlightCtx.fillText(`${agent.id}`, px, py - 8);
+        } else {
+            invisibleCount++;
+        }
+    });
+
+    console.log('描画結果:', {
+        visible: visibleCount,
+        invisible: invisibleCount,
+        total: agents.length,
+        scale: scale,
+        offset: { x: offsetX, y: offsetY },
+        move: { x: xmove, y: ymove }
+    });
+
+    highlightCtx.restore();
+    updateFrameDisplay();
+}
+
 // Socket.IOイベントハンドラを更新
 socket.on('new_data', (data) => {
+    console.log('=== 新しいデータを受信 ===');
+    console.log('データ構造:', {
+        hasData: !!data,
+        hasAgents: data && !!data.agents,
+        agentsLength: data?.agents?.length || 0
+    });
+
     if (data && data.agents && Array.isArray(data.agents)) {
         // 初めてデータを受信したらUIを有効化
         if (availableFrames === 0) {
@@ -209,8 +285,15 @@ socket.on('new_data', (data) => {
         currentFrame = data.frame || currentFrame;
         frameSlider.value = currentFrame;
 
+        // 最初の3エージェントのデータをログ
+        if (data.agents.length > 0) {
+            console.log('サンプルエージェント:', data.agents.slice(0, 3));
+        }
+
         updateAgents(data.agents);
         updateProgressBar();
+    } else {
+        console.error('無効なデータ形式:', data);
     }
 });
 
@@ -269,28 +352,3 @@ function pointToLineDistance(px, py, x1, y1, x2, y2) {
 }
 
 console.log("[map.js] end loading");
-
-// エージェントを描画する関数
-function updateAgents(agents) {
-    // キャンバスをクリア
-    highlightCtx.clearRect(0, 0, highlightCanvas.width, highlightCanvas.height);
-
-    agents.forEach(agent => {
-        // マップと同じスケーリングを使用
-        const px = (agent.x + offsetX) * scale - xmove;
-        const py = canvasHeight - ((agent.y + offsetY) * scale - ymove);
-
-        // エージェントを描画
-        highlightCtx.beginPath();
-        highlightCtx.arc(px, py, 4, 0, 2 * Math.PI);
-        highlightCtx.fillStyle = 'red';
-        highlightCtx.fill();
-        highlightCtx.strokeStyle = 'black';
-        highlightCtx.stroke();
-
-        // エージェントIDを表示
-        highlightCtx.font = '10px Arial';
-        highlightCtx.fillStyle = 'black';
-        highlightCtx.fillText(`${agent.id}`, px + 6, py - 6);
-    });
-}
