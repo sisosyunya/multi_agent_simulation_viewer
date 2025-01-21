@@ -4,6 +4,12 @@ console.log("[map3d.js] Loading...");
 let scene, camera, renderer, controls;
 let agents = [];
 
+// シミュレーション制御用の変数
+let isPlaying = true;
+let simulationTime = 0;
+let timeScale = 1.0;
+let agentStates = [];  // エージェントの状態履歴
+
 // シーンのセットアップ
 function initScene() {
     scene = new THREE.Scene();
@@ -235,7 +241,7 @@ function createInitialAgents() {
     const colors = [0x2266cc, 0xcc2266, 0x66cc22, 0xcccc22, 0x22cccc, 0xcc22cc];
 
     // エージェントの数を増やす（20台）
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < 100; i++) {
         // ランダムな道路位置を選択
         const isVertical = Math.random() < 0.5;
         let x, z;
@@ -317,11 +323,96 @@ function updateAgents() {
     });
 }
 
-// アニメーションループ
+// UI要素の参照を取得
+const playPauseButton = document.getElementById('play-pause');
+const resetButton = document.getElementById('reset');
+const timeSlider = document.getElementById('time-slider');
+const speedSlider = document.getElementById('speed-slider');
+const speedValue = document.getElementById('speed-value');
+const currentTimeLabel = document.getElementById('current-time');
+const totalTimeLabel = document.getElementById('total-time');
+
+// 時間を表示用の文字列に変換
+function formatTime(seconds) {
+    const minutes = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+}
+
+// エージェントの状態を保存
+function saveAgentState() {
+    const state = agents.map(agent => ({
+        position: agent.position.clone(),
+        rotation: agent.rotation.y,
+        userData: { ...agent.userData }
+    }));
+    agentStates.push(state);
+
+    // 1000フレーム分だけ保存
+    if (agentStates.length > 1000) {
+        agentStates.shift();
+    }
+
+    // スライダーとラベルの更新
+    timeSlider.max = agentStates.length - 1;
+    timeSlider.value = agentStates.length - 1;
+    currentTimeLabel.textContent = formatTime(simulationTime);
+    totalTimeLabel.textContent = formatTime(simulationTime);
+}
+
+// 特定の時点の状態を復元
+function restoreAgentState(index) {
+    if (index < 0 || index >= agentStates.length) return;
+
+    const state = agentStates[index];
+    agents.forEach((agent, i) => {
+        agent.position.copy(state[i].position);
+        agent.rotation.y = state[i].rotation;
+        agent.userData = { ...state[i].userData };
+    });
+
+    currentTimeLabel.textContent = formatTime(index / 60);  // 60FPSとして計算
+}
+
+// シミュレーションのリセット
+function resetSimulation() {
+    agentStates = [];
+    simulationTime = 0;
+    createInitialAgents();
+    timeSlider.value = 0;
+    currentTimeLabel.textContent = '00:00';
+}
+
+// イベントリスナーの設定
+playPauseButton.addEventListener('click', () => {
+    isPlaying = !isPlaying;
+    playPauseButton.textContent = isPlaying ? '⏸' : '▶';
+});
+
+resetButton.addEventListener('click', resetSimulation);
+
+timeSlider.addEventListener('input', () => {
+    isPlaying = false;
+    playPauseButton.textContent = '▶';
+    restoreAgentState(parseInt(timeSlider.value));
+});
+
+speedSlider.addEventListener('input', () => {
+    timeScale = speedSlider.value / 100;
+    speedValue.textContent = `${timeScale.toFixed(1)}x`;
+});
+
+// アニメーションループを更新
 function animate() {
     requestAnimationFrame(animate);
     controls.update();
-    updateAgents();
+
+    if (isPlaying) {
+        simulationTime += 1 / 60 * timeScale;  // 60FPSとして計算
+        updateAgents();
+        saveAgentState();
+    }
+
     renderer.render(scene, camera);
 }
 
