@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html>
+<html lang="ja">
 
 <head>
+    <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3Dマップデモ</title>
     <style>
         body {
             margin: 0;
@@ -79,6 +79,9 @@
             min-width: 60px;
         }
     </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/4.8.0/d3.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 </head>
 
 <body>
@@ -88,18 +91,16 @@
         <button id="reset" class="control-button">⟲</button>
         <div id="time-control">
             <span id="current-time" class="time-label">00:00</span>
-            <input type="range" id="time-slider" min="0" max="1000" value="0">
+            <input type="range" id="time-slider" min="0" max="1000" value="0" title="Time Control">
             <span id="total-time" class="time-label">00:00</span>
         </div>
         <div id="speed-control">
             <span>速度:</span>
-            <input type="range" id="speed-slider" min="0" max="200" value="100">
+            <input type="range" id="speed-slider" min="0" max="200" value="100" title="Speed Control">
             <span id="speed-value">1.0x</span>
         </div>
     </div>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
-    <script src="/static/map3d.js"></script>
+    <script src="{{ url_for('static', filename='map3d.js') }}"></script>
 </body>
 
 </html>
