@@ -64,8 +64,8 @@ function initScene() {
     boundary = {
         e: 135.5694,
         n: 34.8195,
-        s: 34.8035,
-        w: 135.5517
+        s: 34.8005,
+        w: 135.5467
     };
 
     // Overpass API から地図を取得 → Three.jsオブジェクトに変換 → シーンに追加
@@ -84,6 +84,14 @@ function initScene() {
         .catch(error => {
             console.error('Overpassデータ取得中にエラー:', error);
         });
+}
+
+function addSphere(x,y,z){
+const normalMaterial = new THREE.MeshBasicMaterial({ color: 0xFF0000 });
+const sphereGeometry = new THREE.SphereGeometry(1, 10, 10);
+const sphere = new THREE.Mesh(sphereGeometry, normalMaterial);
+sphere.position.set(x, y, z);
+scene.add(sphere);
 }
 
 // ========== Overpassから地図データを取得する ==========
@@ -183,7 +191,6 @@ function createGeoObject(project, overpassData) {
     // OSM座標をXY平面に投影
     // root.rotation.x = Math.PI / 2;
     // root.scale.set(1, -1, 1);
-
 
 
     Object.values(overpassData.way).forEach(way => {
@@ -302,9 +309,9 @@ function updateAgentsFromGAMA(data) {
         // 位置を更新
 
         agent.position.set(
-            agentInfo.x - 1680,
+            agentInfo.x,
             0,
-            agentInfo.y - 610
+            agentInfo.y
         );
         // 情報を更新
         agent.userData = {

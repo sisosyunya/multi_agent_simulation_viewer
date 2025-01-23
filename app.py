@@ -14,6 +14,67 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 agent_history = []
 road_data = None
 
+
+def compute_affine_transformation(src_points, dst_points):
+    """
+    4つの対応する点を使用してアフィン変換行列を計算
+    src_points: 元の座標系の4点 [(x1, y1), (x2, y2), (x3, y3), (x4, y4)]
+    dst_points: 対応する目標座標系の4点 [(x1', y1'), (x2', y2'), (x3', y3'), (x4', y4')]
+    """
+    # ソースとターゲット座標をNumPy配列に変換
+    src_points = np.array(src_points)
+    dst_points = np.array(dst_points)
+
+    # ソース座標の行列を構築
+    A = []
+    for (x, y), (x_prime, y_prime) in zip(src_points, dst_points):
+        A.append([x, y, 1, 0, 0, 0, -x * x_prime, -y * x_prime])
+        A.append([0, 0, 0, x, y, 1, -x * y_prime, -y * y_prime])
+
+    A = np.array(A)
+
+    # 目標座標のベクトルを構築
+    B = dst_points.flatten()
+
+    # アフィン変換行列の要素を計算
+    H = np.linalg.lstsq(A, B, rcond=None)[0]
+    H = np.append(H, 1).reshape(3, 3)  # 3x3行列に変形
+    return H
+
+def transform_point(P, H):
+    """
+    アフィン変換行列Hを使って点Pを変換
+    P: (x, y) の座標
+    H: 3x3のアフィン変換行列
+    """
+    x, y = P
+    point = np.array([x, y, 1])
+    transformed_point = np.dot(H, point)
+    transformed_point /= transformed_point[2]  # 正規化
+    return transformed_point[:2]
+
+
+#GAMA上の座標とThree.js上の位置合わせのためのアフィン変換行列の計算=====
+#GAMA座標系の4点ABCD
+A = (649.8888940885663,357.4444473045878);
+B = (2463.3611308187246,407.36111437063664);
+C = (2130.472239267081,1724.8333471324295);
+D = (505.63889293558896,1745.250013962388);
+#Three.js座標系の4点EFGH
+E = (-821, -772);
+F = (1232, -702);
+G = (861, 1121);
+H = (-983, 1150);
+# 四角形の4点（元の座標系）
+src_points = [A,B,C,D]
+# 対応する四角形の4点（目標座標系）
+dst_points = [E,F,G,H]
+# アフィン変換行列を計算
+H = compute_affine_transformation(src_points, dst_points)
+#=================================================================
+
+
+
 # 道路データの読み込み
 def load_road_data():
     global road_data
@@ -172,11 +233,12 @@ def data_from_gama():
         # データを配列に変換
         agents_data = []
         for agent in data:
+            agent_xy_transformed = transform_point((agent['x'],agent['y']), H)
             try:
                 agent_data = {
                     'id': int(agent['id']),  # 明示的に型変換
-                    'x': float(agent['x']),
-                    'y': float(agent['y'])
+                    'x': float(agent_xy_transformed[0]),
+                    'y': float(agent_xy_transformed[1])
                 }
                 agents_data.append(agent_data)
             except (KeyError, ValueError, TypeError) as e:
