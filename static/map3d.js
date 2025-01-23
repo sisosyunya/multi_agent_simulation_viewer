@@ -4,9 +4,11 @@ console.log("[map3d.js] Loading...");
 
 // ========== グローバル変数定義 ==========
 let scene, camera, renderer, controls;
-let agents = [];              // 車（エージェント）の配列
-let agentStates = [];         // エージェントの状態履歴
-let isPlaying = true;         // 再生・停止のフラグ
+
+// GAMA など外部から受け取ったエージェントを保持する配列・履歴
+let agents = [];              // 現在表示中のエージェント（Three.js Mesh）
+let agentStates = [];         // 過去フレームを含めて保存したい場合に使う
+let isPlaying = true;         // 再生フラグ
 let simulationTime = 0;       // シミュレーション経過時間 (秒換算)
 let timeScale = 1.0;          // 再生速度倍率
 let boundary;                 // 地図の取得範囲
@@ -22,11 +24,11 @@ const totalTimeLabel = document.getElementById('total-time');
 
 // ========== シーン初期化 ==========
 function initScene() {
-    // シーンを作る
+    // Three.jsのシーン
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0xf0f0f0);
 
-    // カメラを作る
+    // カメラ作成
     camera = new THREE.PerspectiveCamera(
         75,
         window.innerWidth / window.innerHeight,
@@ -35,29 +37,30 @@ function initScene() {
     );
     camera.position.set(200, 200, 200);
     camera.lookAt(0, 0, 0);
+    //軸を追加する。
+    const axesHelper = new THREE.AxesHelper(1000);
+    scene.add(axesHelper);
 
-    // レンダラを作る
+    // レンダラ作成
     renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.shadowMap.enabled = true;
     document.getElementById('scene-container').appendChild(renderer.domElement);
 
-    // 環境光を追加
+    // ライティング
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
     scene.add(ambientLight);
-
-    // 平行光源を追加
     const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
     directionalLight.position.set(100, 100, 100);
     directionalLight.castShadow = true;
     scene.add(directionalLight);
 
-    // OrbitControlsを追加
+    // OrbitControls
     controls = new THREE.OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
 
-    // 地図データを取得する範囲
+    // 地図を読み込む範囲
     boundary = {
         e: 135.5694,
         n: 34.8195,
@@ -65,23 +68,22 @@ function initScene() {
         w: 135.5517
     };
 
-    // Overpass APIを使って地図を読み込み → Three.js オブジェクトに変換 → シーンに追加
+    // Overpass API から地図を取得 → Three.jsオブジェクトに変換 → シーンに追加
     createMap(boundary)
-      .then((overpassData) => {
-          // 1) 中心座標を計算
-          const center = centroid(boundary);
-          // 2) 投影関数を作成（Mercator）
-          const project = createProjection(center);
-          // 3) OSMデータをThree.jsのObject3Dに変換
-          const geoObject = createGeoObject(project, overpassData);
-          scene.add(geoObject);
+        .then(overpassData => {
+            // 中心座標
+            const center = centroid(boundary);
+            // プロジェクション作成 (Mercator)
+            const project = createProjection(center);
+            // Overpassデータを Three.js のジオメトリに
+            const geoObject = createGeoObject(project, overpassData);
+            scene.add(geoObject);
 
-          // マップを表示した後、初期エージェント（車）を生成
-          createInitialAgents();
-      })
-      .catch(error => {
-          console.error('Overpassデータ取得中にエラー:', error);
-      });
+            console.log("[map3d.js] Map loaded. Waiting for external agent data...");
+        })
+        .catch(error => {
+            console.error('Overpassデータ取得中にエラー:', error);
+        });
 }
 
 // ========== Overpassから地図データを取得する ==========
@@ -91,37 +93,29 @@ function createMap(boundary) {
         let url = baseUrl.replace(/\{([swne])\}/g, (match, key) => {
             return boundary[key];
         });
-
-        // d3.json を使ってOverpass APIからOSMデータを取得
         d3.json(url, (error, root) => {
             if (error) reject(error);
             resolve(root);
         });
     })
-    .then((rawData) => {
-        // 取得した rawData.elements を node, way, relation に仕分け
-        const acc = {
-            node: {},
-            way: {},
-            relation: {}
-        };
-        rawData.elements.forEach(elem => {
-            acc[elem.type][elem.id] = elem;
+        .then(rawData => {
+            // node/way/relation に仕分け
+            const acc = { node: {}, way: {}, relation: {} };
+            rawData.elements.forEach(elem => {
+                acc[elem.type][elem.id] = elem;
+            });
+            return acc;
         });
-        return acc;
-    });
 }
 
-// ========== 地図オブジェクト作成用の補助関数 ==========
+// ========== 地図用の補助関数 ==========
 
-// 指定した範囲の中央 (経度, 緯度) を返す
 function centroid(boundary) {
     const midLon = (boundary.w + boundary.e) / 2;
     const midLat = (boundary.n + boundary.s) / 2;
     return [midLon, midLat];
 }
 
-// Mercator投影を作成
 function createProjection(center) {
     return d3.geoMercator()
         .center(center)
@@ -129,64 +123,38 @@ function createProjection(center) {
         .translate([0, 0]);
 }
 
-// "closed way" かどうかを判定 (building 等のポリゴン向け)
 function isArea(way) {
-    // way.nodes[0] と way.nodes[way.nodes.length-1] が同じIDならポリゴン（OSMデータではこれが閉じたウェイの目安）
     if (!way.nodes || way.nodes.length < 2) return false;
     return (way.nodes[0] === way.nodes[way.nodes.length - 1]);
 }
 
-// Way の node を取得 ( { lon, lat } の配列 )
 function getNodes(way, overpassData) {
     return way.nodes.map(nodeId => overpassData.node[nodeId]);
 }
 
-// 建物の高さを決定
 function getBuildingHeight(tags) {
-    // building:levels があれば floor数 × 3m, なければ height があればそれを使う
-    // 何もなければデフォルト値 10m
     if (tags["height"]) {
         return parseFloat(tags["height"]);
     }
     if (tags["building:levels"]) {
         const levels = parseFloat(tags["building:levels"]);
-        return isNaN(levels) ? 10 : levels * 3; // 1階あたり3m
+        return isNaN(levels) ? 10 : levels * 3;
     }
-    // デフォルト高さ
     return 10;
 }
 
-// ポリゴン(建物)を生成して返す
 function createBuildingPolygon(way, project, overpassData) {
-    // ウェイを構成するノード座標を取り出し
     const nodePositions = getNodes(way, overpassData);
-
-    // Shape を作るために [x, y] 座標へ変換（Mercator）
-    // Three.js では XY 平面で形状を作り、Z方向に押し出し
     const shape = new THREE.Shape();
-
     nodePositions.forEach((pos, i) => {
         const [px, py] = project([pos.lon, pos.lat]);
-        if (i === 0) {
-            shape.moveTo(px, py);
-        } else {
-            shape.lineTo(px, py);
-        }
+        if (i === 0) shape.moveTo(px, py);
+        else shape.lineTo(px, py);
     });
-
-    // 押し出し高さ
     const buildingHeight = getBuildingHeight(way.tags);
-
-    // ExtrudeGeometry 用オプション
-    const extrudeSettings = {
-        depth: buildingHeight,
-        bevelEnabled: false,
-    };
-
-    // 形状を押し出して 3D メッシュを作る
+    const extrudeSettings = { depth: buildingHeight, bevelEnabled: false };
     const geometry = new THREE.ExtrudeGeometry(shape, extrudeSettings);
 
-    // 適当なマテリアル設定
     const material = new THREE.MeshLambertMaterial({
         color: 0xd0c0b0,
         transparent: true,
@@ -194,45 +162,40 @@ function createBuildingPolygon(way, project, overpassData) {
     });
     const mesh = new THREE.Mesh(geometry, material);
 
-    // ビルっぽさを出すためワイヤーフレームを追加（オプション）
+    // ワイヤーフレームを追加
     const wireframe = new THREE.LineSegments(
         new THREE.EdgesGeometry(geometry),
         new THREE.LineBasicMaterial({ color: 0x555555 })
     );
     mesh.add(wireframe);
-
     return mesh;
 }
 
-// 道路などの色を決定する関数
 function getWayColor(tags) {
-    // highwayタグがあれば道路とみなす → グレー系
     if (tags.highway) {
-        return 0x888888; // 自然なアスファルトっぽいグレー
+        return 0x888888;
     }
-    // それ以外の線分は、淡いグレーなど適宜
     return 0xb0b0b0;
 }
 
-// Overpassから取得したデータ(node/way)を Three.js のジオメトリに変換
 function createGeoObject(project, overpassData) {
     const root = new THREE.Object3D();
-    // OSM座標系（緯度経度）→ XY平面(Three.js座標) にするため、回転やスケールを調整
-    root.rotation.x = Math.PI / 2;  // XY平面に投影
-    root.scale.set(1, -1, 1);      // Y軸を反転（Mercator系→ThreeJSの向き合わせ）
+    // OSM座標をXY平面に投影
+    // root.rotation.x = Math.PI / 2;
+    // root.scale.set(1, -1, 1);
 
-    // すべてのWayを走査
+
+
     Object.values(overpassData.way).forEach(way => {
         const tags = way.tags || {};
+        // // 建物
+        // if (isArea(way) && tags.building) {
+        //     const buildingMesh = createBuildingPolygon(way, project, overpassData);
+        //     root.add(buildingMesh);
+        //     return;
+        // }
 
-        // "closed way" かつ building タグがあれば -> 建物ポリゴンを描画
-        if (isArea(way) && tags.building) {
-            const buildingMesh = createBuildingPolygon(way, project, overpassData);
-            root.add(buildingMesh);
-            return;
-        }
-
-        // 上記以外は単純に Line で描画（道路など）
+        // 道路などのライン
         const nodePositions = getNodes(way, overpassData);
         const geometry = new THREE.BufferGeometry();
         const vertices = [];
@@ -243,18 +206,21 @@ function createGeoObject(project, overpassData) {
         });
         geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
 
-        // 道路っぽい色 or デフォルト色
         const material = new THREE.LineBasicMaterial({ color: getWayColor(tags) });
         const line = new THREE.Line(geometry, material);
+        // line.rotation.set(0, 0, 0);
+        root.rotation.x = Math.PI /2;
         root.add(line);
     });
 
     return root;
 }
 
-// ========== 車（エージェント）関連の処理 ==========
+// ========== エージェント関連 ==========
 
-// 車の 3D モデルを作る
+/**
+ * シンプルな車の3Dモデルを返す
+ */
 function createCarModel(color = 0x2266cc) {
     const carGroup = new THREE.Group();
 
@@ -284,17 +250,14 @@ function createCarModel(color = 0x2266cc) {
         metalness: 0.5,
         roughness: 0.7
     });
-
     const wheelPositions = [
         { x: -1, y: 0.4, z: -1.2 },
-        { x:  1, y: 0.4, z: -1.2 },
-        { x: -1, y: 0.4, z:  1.2 },
-        { x:  1, y: 0.4, z:  1.2 }
+        { x: 1, y: 0.4, z: -1.2 },
+        { x: -1, y: 0.4, z: 1.2 },
+        { x: 1, y: 0.4, z: 1.2 }
     ];
-
     wheelPositions.forEach(pos => {
         const wheel = new THREE.Mesh(wheelGeometry, wheelMaterial);
-        wheel.rotation.z = Math.PI / 2;
         wheel.position.set(pos.x, pos.y, pos.z);
         wheel.castShadow = true;
         carGroup.add(wheel);
@@ -303,205 +266,128 @@ function createCarModel(color = 0x2266cc) {
     return carGroup;
 }
 
-// 簡易的な道路グリッド情報 (エージェント移動用)
-const ROAD_GRID = {
-    spacing: 50,   // 道路の間隔
-    width: 10,     // 道路の幅
-    start: -200,   // グリッドの開始位置
-    end: 200       // グリッドの終了位置
-};
+function updateAgentsFromGAMA(data) {
+    console.log("[map3d.js] Updating agents from external data:", data);
 
-// 最も近い道路の位置にスナップする
-function snapToRoad(position) {
-    const x = position.x;
-    const z = position.z;
-
-    const nearestX = Math.round((x - ROAD_GRID.start) / ROAD_GRID.spacing) * ROAD_GRID.spacing + ROAD_GRID.start;
-    const nearestZ = Math.round((z - ROAD_GRID.start) / ROAD_GRID.spacing) * ROAD_GRID.spacing + ROAD_GRID.start;
-
-    const distToXRoad = Math.abs(z - nearestZ);
-    const distToZRoad = Math.abs(x - nearestX);
-
-    if (distToXRoad < distToZRoad) {
-        // 東西方向の道路上
-        return { x: x, z: nearestZ };
-    } else {
-        // 南北方向の道路上
-        return { x: nearestX, z: z };
-    }
-}
-
-// 交差点かどうかを判定
-function isIntersection(position, threshold = 5) {
-    const x = position.x;
-    const z = position.z;
-
-    // 最も近い交差点（グリッドの交点）を計算
-    const nearestX = Math.round((x - ROAD_GRID.start) / ROAD_GRID.spacing) * ROAD_GRID.spacing + ROAD_GRID.start;
-    const nearestZ = Math.round((z - ROAD_GRID.start) / ROAD_GRID.spacing) * ROAD_GRID.spacing + ROAD_GRID.start;
-
-    const distToIntersection = Math.sqrt((x - nearestX) ** 2 + (z - nearestZ) ** 2);
-    return distToIntersection < threshold;
-}
-
-// 初期エージェントをまとめて生成
-function createInitialAgents() {
-    const colors = [0x2266cc, 0xcc2266, 0x66cc22, 0xcccc22, 0x22cccc, 0xcc22cc];
-
-    // 100台生成
-    for (let i = 0; i < 100; i++) {
-        // 南北or東西道路をランダムに選択
-        const isVertical = Math.random() < 0.5;
-        let x, z;
-
-        if (isVertical) {
-            x = ROAD_GRID.start + Math.floor(Math.random() * 9) * ROAD_GRID.spacing;
-            z = ROAD_GRID.start + Math.random() * (ROAD_GRID.end - ROAD_GRID.start);
-        } else {
-            x = ROAD_GRID.start + Math.random() * (ROAD_GRID.end - ROAD_GRID.start);
-            z = ROAD_GRID.start + Math.floor(Math.random() * 9) * ROAD_GRID.spacing;
+    // 初回の場合、100体のエージェントを作成
+    if (agents.length === 0) {
+        for (let i = 0; i < 1000; i++) {
+            const carMesh = createCarModel(0x2266cc); // 青い車
+            carMesh.position.set(0, 0, 0); // 初期位置
+            carMesh.userData = {
+                id: i,
+                speed: 0
+            };
+            scene.add(carMesh);
+            agents.push(carMesh);
         }
+        console.log("[map3d.js] Created 500 initial agents");
+    }
 
-        // 進行方向
-        const rotation = isVertical
-            ? (Math.random() < 0.5 ? 0 : Math.PI)
-            : (Math.random() < 0.5 ? Math.PI / 2 : -Math.PI / 2);
+    // データを100個に制限
+    const limitedData = data.slice(0, 1000);
+    if (limitedData.length < 1000) {
+        console.warn(`[map3d.js] Received only ${limitedData.length} data points, some agents will not be updated`);
+    }
 
-        // 車モデルを作成
-        const car = createCarModel(colors[i % colors.length]);
-        car.position.set(x, 0, z);
-        car.rotation.y = rotation;
 
-        car.userData = {
-            speed: 0.3 + Math.random() * 0.2,
-            direction: new THREE.Vector3(
-                Math.sin(rotation),
-                0,
-                Math.cos(rotation)
-            ),
-            isOnVerticalRoad: isVertical,
-            lastIntersection: -1000 // 交差点判定用カウンタ
+    limitedData.forEach((agentInfo, index) => {
+        if (index >= agents.length) return;
+
+        const agent = agents[index];
+        const scale = 90; // スケーリング係数
+        // GAMAの中心座標
+        // X 1378.8333443645388
+        // Y 1259.1388989621773
+        // 位置を更新
+
+        agent.position.set(
+            agentInfo.x - 1690,
+            0,
+            agentInfo.y - 570
+        );
+        // 情報を更新
+        agent.userData = {
+            id: agentInfo.id,
+            speed: agentInfo.speed
         };
-
-        scene.add(car);
-        agents.push(car);
-    }
-}
-
-// エージェントの動きを更新
-function updateAgents() {
-    agents.forEach(agent => {
-        const pos = agent.position;
-
-        // 交差点チェック
-        if (isIntersection(pos)) {
-            // 前回の交差点から十分フレーム数が経っていれば方向を変える
-            if (agent.userData.lastIntersection < -20) {
-                // 30%の確率で90度曲がる
-                if (Math.random() < 0.3) {
-                    const turnDirection = Math.random() < 0.5 ? Math.PI / 2 : -Math.PI / 2;
-                    agent.rotation.y += turnDirection;
-                    agent.userData.direction.set(
-                        Math.sin(agent.rotation.y),
-                        0,
-                        Math.cos(agent.rotation.y)
-                    );
-                    agent.userData.isOnVerticalRoad = !agent.userData.isOnVerticalRoad;
-                }
-                agent.userData.lastIntersection = 0;
-            }
-        }
-        agent.userData.lastIntersection--;
-
-        // 移動
-        const direction = agent.userData.direction.clone();
-        agent.position.add(direction.multiplyScalar(agent.userData.speed));
-
-        // 道路に沿うよう座標をスナップ
-        const snappedPos = snapToRoad(pos);
-        if (agent.userData.isOnVerticalRoad) {
-            pos.x = snappedPos.x;
-        } else {
-            pos.z = snappedPos.z;
-        }
-
-        // マップ外に出たら反対側へ
-        if (pos.x > ROAD_GRID.end + 10)  pos.x = ROAD_GRID.start - 10;
-        if (pos.x < ROAD_GRID.start - 10) pos.x = ROAD_GRID.end + 10;
-        if (pos.z > ROAD_GRID.end + 10)  pos.z = ROAD_GRID.start - 10;
-        if (pos.z < ROAD_GRID.start - 10) pos.z = ROAD_GRID.end + 10;
     });
+
+    console.log(`[map3d.js] Updated ${limitedData.length} agents with received data`);
 }
 
-// 時間表示用フォーマット
+
+// ========== 時間表示用フォーマット (UIに利用) ==========
 function formatTime(seconds) {
     const minutes = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
     return `${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
 }
 
-// シミュレーション状態を保存
+// ========== エージェント状態の履歴管理 (スライダなど) ==========
 function saveAgentState() {
-    const state = agents.map(agent => ({
-        position: agent.position.clone(),
-        rotation: agent.rotation.y,
-        userData: { ...agent.userData }
+    // 現在のエージェント位置などをコピーしておき、履歴に追加
+    const snapshot = agents.map(a => ({
+        position: a.position.clone(),
+        rotation: a.rotation.y,
+        userData: { ...a.userData }
     }));
-    agentStates.push(state);
+    agentStates.push(snapshot);
 
-    // 1000フレームまで保存
+    // フレーム数が多すぎないように
     if (agentStates.length > 1000) {
         agentStates.shift();
     }
-
-    // スライダーとラベルの更新
     timeSlider.max = agentStates.length - 1;
     timeSlider.value = agentStates.length - 1;
+
+    // ラベル更新
     currentTimeLabel.textContent = formatTime(simulationTime);
     totalTimeLabel.textContent = formatTime(simulationTime);
 }
 
-// 特定のフレームの状態を復元
+/**
+ * 指定したフレームを取り出してエージェントに反映
+ */
 function restoreAgentState(index) {
     if (index < 0 || index >= agentStates.length) return;
-
-    const state = agentStates[index];
+    const snapshot = agentStates[index];
+    if (snapshot.length !== agents.length) {
+        console.warn("[map3d.js] restoreAgentState: agent count mismatch");
+    }
+    // ある程度ID対応など工夫も可能だが、ここでは配列順で対応
     agents.forEach((agent, i) => {
-        agent.position.copy(state[i].position);
-        agent.rotation.y = state[i].rotation;
-        agent.userData = { ...state[i].userData };
+        const s = snapshot[i];
+        agent.position.copy(s.position);
+        agent.rotation.y = s.rotation;
+        agent.userData = { ...s.userData };
     });
-
     currentTimeLabel.textContent = formatTime(index / 60); // 60FPS仮定
 }
 
-// シミュレーションのリセット
+// ========== シミュレーションのリセット ==========
 function resetSimulation() {
-    // いったんシーンから既存エージェントを削除
-    agents.forEach(agent => scene.remove(agent));
+    // シーンから削除
+    agents.forEach(a => scene.remove(a));
     agents = [];
 
     agentStates = [];
     simulationTime = 0;
 
-    // エージェント再生成
-    createInitialAgents();
     timeSlider.value = 0;
     currentTimeLabel.textContent = '00:00';
+    console.log("[map3d.js] Reset simulation (agents cleared).");
 }
 
-// ========== イベントリスナー ==========
-
-// 再生/一時停止
+// ========== イベントリスナー (UI) ==========
 playPauseButton.addEventListener('click', () => {
     isPlaying = !isPlaying;
     playPauseButton.textContent = isPlaying ? '⏸' : '▶';
 });
 
-// リセット
 resetButton.addEventListener('click', resetSimulation);
 
-// 時間スライダ操作（任意のフレームにジャンプ）
+// スライダでフレームジャンプ
 timeSlider.addEventListener('input', () => {
     isPlaying = false;
     playPauseButton.textContent = '▶';
@@ -520,24 +406,41 @@ function animate() {
     controls.update();
 
     if (isPlaying) {
-        // 60FPS想定で timeScale 倍速
         simulationTime += (1 / 60) * timeScale;
-
-        updateAgents();
         saveAgentState();
     }
 
     renderer.render(scene, camera);
 }
 
-// ========== ウィンドウサイズ変更対応 ==========
+// ========== リサイズ対応 ==========
+window.addEventListener('resize', onWindowResize, false);
 function onWindowResize() {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
 }
-window.addEventListener('resize', onWindowResize, false);
 
 // ========== 初期化 & 実行 ==========
 initScene();
 animate();
+
+// ========== Socket.IO で外部データを受け取り、updateAgentsFromGAMA()を呼ぶ ==========
+const socket = io(); // 同じサーバで提供している場合
+
+socket.on('connect', () => {
+    console.log("[map3d.js] Socket.IO connected");
+});
+socket.on('disconnect', () => {
+    console.log("[map3d.js] Socket.IO disconnected");
+});
+
+socket.on('new_data', (data) => {
+    console.log("[map3d.js] Received new_data:", data);
+    if (data && Array.isArray(data.agents)) {
+        // 新しいエージェント情報を反映
+        updateAgentsFromGAMA(data.agents);
+    } else {
+        console.warn("[map3d.js] Invalid data format received:", data);
+    }
+});
