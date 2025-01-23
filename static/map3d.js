@@ -302,9 +302,9 @@ function updateAgentsFromGAMA(data) {
         // 位置を更新
 
         agent.position.set(
-            agentInfo.x - 1690,
+            agentInfo.x - 1680,
             0,
-            agentInfo.y - 570
+            agentInfo.y - 610
         );
         // 情報を更新
         agent.userData = {
