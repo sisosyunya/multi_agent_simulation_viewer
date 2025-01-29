@@ -5,13 +5,16 @@ from flask_socketio import SocketIO
 import random
 import math
 import numpy as np
+from datetime import datetime
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'secret!'
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
 # グローバル変数
-agent_history = []
+agent_history = []  # 全フレームのデータを保持
+current_frame = 0   # 現在のフレーム番号
+is_paused = False  # 一時停止状態
 road_data = None
 
 
@@ -218,17 +221,70 @@ def roads():
         data = json.load(f)
     return jsonify(data)
 
+def save_agent_history():
+    """エージェントの履歴データを保存"""
+    if not agent_history:
+        return
+    
+    # データ保存用のディレクトリを作成
+    save_dir = os.path.join(os.path.dirname(__file__), 'data')
+    os.makedirs(save_dir, exist_ok=True)
+    
+    # タイムスタンプを含むファイル名を生成
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    filename = f'agent_history_{timestamp}.json'
+    filepath = os.path.join(save_dir, filename)
+    
+    # データを保存
+    try:
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump({
+                'total_frames': len(agent_history),
+                'frames': agent_history
+            }, f, indent=2)
+        print(f"Data saved to {filepath}")
+        return filepath
+    except Exception as e:
+        print(f"Error saving data: {e}")
+        return None
+
+def load_agent_history(filepath):
+    """保存されたエージェントの履歴データを読み込む"""
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            return data['frames']
+    except Exception as e:
+        print(f"Error loading data: {e}")
+        return []
+
+@socketio.on('playback_control')
+def handle_playback_control(data):
+    """再生制御を処理するイベントハンドラ"""
+    global is_paused, current_frame
+    
+    command = data.get('command')
+    if command == 'pause':
+        is_paused = True
+        print("Playback paused")
+    elif command == 'resume':
+        is_paused = False
+        print("Playback resumed")
+    
+    # 現在の状態をクライアントに通知
+    socketio.emit('playback_status', {
+        'is_paused': is_paused,
+        'current_frame': current_frame,
+        'total_frames': len(agent_history)
+    })
+
 @app.route('/data_from_gama', methods=['POST'])
 def data_from_gama():
     try:
-        data = request.get_json(force=True)  # force=True を追加
+        data = request.get_json(force=True)
         if not data:
             print("No data received")
             return jsonify({"status": "No data received"}), 400
-
-        # データ形式のデバッグ出力
-        print("Received data type:", type(data))
-        print("Received data:", data[:2] if isinstance(data, list) else data)
 
         # データを配列に変換
         agents_data = []
@@ -236,42 +292,86 @@ def data_from_gama():
             agent_xy_transformed = transform_point((agent['x'],agent['y']), H)
             try:
                 agent_data = {
-                    'id': int(agent['id']),  # 明示的に型変換
+                    'id': int(agent['id']),
                     'x': float(agent_xy_transformed[0]),
                     'y': float(agent_xy_transformed[1])
                 }
                 agents_data.append(agent_data)
             except (KeyError, ValueError, TypeError) as e:
                 print(f"Error processing agent data: {e}")
-                print(f"Problematic agent data: {agent}")
                 continue
 
         # 履歴に追加
         agent_history.append(agents_data)
-        current_frame = len(agent_history) - 1
+        frame_number = len(agent_history) - 1
+        print(f"Frame {frame_number} saved, total agents: {len(agents_data)}")
 
-        # デバッグ出力
-        print(f"\n=== Frame {current_frame} ===")
-        print(f"Total agents: {len(agents_data)}")
-        for agent in agents_data[:3]:
-            print(f"Agent {agent['id']}: x={agent['x']:.2f}, y={agent['y']:.2f}")
+        # 100フレームごとにデータを保存
+        if frame_number > 0 and frame_number % 100 == 0:
+            save_agent_history()
 
-        # エージェントデータをブロードキャスト
-        socketio.emit('new_data', {
-            'agents': agents_data,
-            'frame': current_frame,
-            'total_frames': len(agent_history)
-        })
+        # 一時停止中でない場合のみ、最新のデータをブロードキャスト
+        if not is_paused:
+            socketio.emit('new_data', {
+                'agents': agents_data,
+                'frame': frame_number,
+                'total_frames': len(agent_history)
+            })
 
         return jsonify({
             "status": "success",
-            "frame": current_frame,
+            "frame": frame_number,
             "agent_count": len(agents_data)
         }), 200
 
     except Exception as e:
         print(f"Error processing request: {str(e)}")
         return jsonify({"status": "error", "message": str(e)}), 400
+
+@app.route('/save_data', methods=['POST'])
+def save_data():
+    """現在のデータを手動で保存するエンドポイント"""
+    filepath = save_agent_history()
+    if filepath:
+        return jsonify({
+            "status": "success",
+            "message": "Data saved successfully",
+            "filepath": filepath
+        })
+    else:
+        return jsonify({
+            "status": "error",
+            "message": "Failed to save data"
+        }), 500
+
+@app.route('/load_data', methods=['POST'])
+def load_data():
+    """保存されたデータを読み込むエンドポイント"""
+    try:
+        filepath = request.json.get('filepath')
+        if not filepath:
+            return jsonify({"status": "error", "message": "No filepath provided"}), 400
+        
+        global agent_history
+        agent_history = load_agent_history(filepath)
+        
+        if agent_history:
+            return jsonify({
+                "status": "success",
+                "message": "Data loaded successfully",
+                "total_frames": len(agent_history)
+            })
+        else:
+            return jsonify({
+                "status": "error",
+                "message": "Failed to load data"
+            }), 500
+            
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
 
 @app.route('/buildings')
 def buildings():

@@ -12,6 +12,8 @@ let isPlaying = true;         // 再生フラグ
 let simulationTime = 0;       // シミュレーション経過時間 (秒換算)
 let timeScale = 1.0;          // 再生速度倍率
 let boundary;                 // 地図の取得範囲
+let currentFrame = 0;
+let totalFrames = 0;
 
 // UI 要素
 const playPauseButton = document.getElementById('play-pause');
@@ -86,12 +88,12 @@ function initScene() {
         });
 }
 
-function addSphere(x,y,z){
-const normalMaterial = new THREE.MeshBasicMaterial({ color: 0xFF0000 });
-const sphereGeometry = new THREE.SphereGeometry(1, 10, 10);
-const sphere = new THREE.Mesh(sphereGeometry, normalMaterial);
-sphere.position.set(x, y, z);
-scene.add(sphere);
+function addSphere(x, y, z) {
+    const normalMaterial = new THREE.MeshBasicMaterial({ color: 0xFF0000 });
+    const sphereGeometry = new THREE.SphereGeometry(1, 10, 10);
+    const sphere = new THREE.Mesh(sphereGeometry, normalMaterial);
+    sphere.position.set(x, y, z);
+    scene.add(sphere);
 }
 
 // ========== Overpassから地図データを取得する ==========
@@ -216,7 +218,7 @@ function createGeoObject(project, overpassData) {
         const material = new THREE.LineBasicMaterial({ color: getWayColor(tags) });
         const line = new THREE.Line(geometry, material);
         // line.rotation.set(0, 0, 0);
-        root.rotation.x = Math.PI /2;
+        root.rotation.x = Math.PI / 2;
         root.add(line);
     });
 
@@ -390,6 +392,13 @@ function resetSimulation() {
 playPauseButton.addEventListener('click', () => {
     isPlaying = !isPlaying;
     playPauseButton.textContent = isPlaying ? '⏸' : '▶';
+
+    // サーバーに再生状態を通知
+    socket.emit('playback_control', {
+        command: isPlaying ? 'resume' : 'pause'
+    });
+
+    console.log(`Playback ${isPlaying ? 'resumed' : 'paused'}`);
 });
 
 resetButton.addEventListener('click', resetSimulation);
@@ -442,12 +451,29 @@ socket.on('disconnect', () => {
     console.log("[map3d.js] Socket.IO disconnected");
 });
 
+socket.on('playback_status', (status) => {
+    isPlaying = !status.is_paused;
+    playPauseButton.textContent = isPlaying ? '⏸' : '▶';
+    currentFrame = status.current_frame;
+    totalFrames = status.total_frames;
+
+    // スライダーと時間表示を更新
+    timeSlider.max = totalFrames - 1;
+    timeSlider.value = currentFrame;
+    currentTimeLabel.textContent = formatTime(currentFrame * 0.1);
+    totalTimeLabel.textContent = formatTime((totalFrames - 1) * 0.1);
+});
+
 socket.on('new_data', (data) => {
-    console.log("[map3d.js] Received new_data:", data);
     if (data && Array.isArray(data.agents)) {
-        // 新しいエージェント情報を反映
         updateAgentsFromGAMA(data.agents);
-    } else {
-        console.warn("[map3d.js] Invalid data format received:", data);
+        currentFrame = data.frame;
+        totalFrames = data.total_frames;
+
+        // スライダーと時間表示を更新
+        timeSlider.max = totalFrames - 1;
+        timeSlider.value = currentFrame;
+        currentTimeLabel.textContent = formatTime(currentFrame * 0.1);
+        totalTimeLabel.textContent = formatTime((totalFrames - 1) * 0.1);
     }
 });
